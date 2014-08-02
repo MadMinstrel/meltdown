@@ -58,8 +58,8 @@ class BakePass(bpy.types.PropertyGroup):
     samples = bpy.props.IntProperty(name="Samples", description="", default=1)
     suffix = bpy.props.StringProperty(name="Suffix", description="", default="")
     
-    def get_filepath(self, bjs):
-        path = bjs.output + bjs.name 
+    def get_filepath(self, bj):
+        path = bj.output + bj.name 
         if len(self.suffix)>0:
             path += "_" + self.suffix
         path += ".png"
@@ -68,16 +68,14 @@ class BakePass(bpy.types.PropertyGroup):
 register_class(BakePass)
                                             
     
-class BakeJobSettings(bpy.types.PropertyGroup):
-    bl_idname = __name__
-    
+class BakeJob(bpy.types.PropertyGroup):
     resolution_x = bpy.props.IntProperty(name="Resolution X",
                                                 default = 1024)
     resolution_y = bpy.props.IntProperty(name="Resolution Y",
                                                 default = 1024)
     output = bpy.props.StringProperty(name = 'File path',
                             description = 'The path of the output image.',
-                            default = '//',
+                            default = '//textures/',
                             subtype = 'FILE_PATH')
     name = bpy.props.StringProperty(name = 'name',
                             description = '',
@@ -85,73 +83,111 @@ class BakeJobSettings(bpy.types.PropertyGroup):
     
     bake_queue = bpy.props.CollectionProperty(type=BakePair)
     bake_pass_queue = bpy.props.CollectionProperty(type=BakePass)
-    image_settings = ""
     
-register_class(BakeJobSettings)
-bpy.types.Scene.bakejob_settings = PointerProperty(type = BakeJobSettings)
+register_class(BakeJob)
+
+class BakeToolsSettings(bpy.types.PropertyGroup):
+    bl_idname = __name__
+    bake_job_queue = bpy.props.CollectionProperty(type=BakeJob)
+    
+register_class(BakeToolsSettings)
+bpy.types.Scene.baketools_settings = PointerProperty(type = BakeToolsSettings)
 
 class BakeToolsBakeOp(bpy.types.Operator):
-    '''Bakes'''
+    '''Bake'''
 
     bl_idname = "baketools.bake"
     bl_label = "Bake"
     
     def execute(self, context):
-        bjs = context.scene.bakejob_settings
+        bts = context.scene.baketools_settings
         
         #cycles baking currently crashes on gpu bake
         cycles_device = bpy.data.scenes['Scene'].cycles.device
         bpy.data.scenes['Scene'].cycles.device = 'CPU'
-        
-        if not os.path.exists(bpy.path.abspath(bjs.output)):
-            os.makedirs(bpy.path.abspath(bjs.output))
-        
-        bake_mat = context.active_object.active_material
-        
-        #add an image node to the lowpoly model's material
-        if "target" not in bake_mat.node_tree.nodes:
-            imgnode = bake_mat.node_tree.nodes.new(type = "ShaderNodeTexImage")
-            imgnode.image = bpy.data.images['target']
-            imgnode.name = 'target'
-            imgnode.label = 'target'
-        else:
-            imgnode = bake_mat.node_tree.nodes['target']
-            imgnode.image = bpy.data.images['target']
-        
-        for i, bakepass in enumerate(bjs.bake_pass_queue):
-            #get rid of old image
-            if 'target' in bpy.data.images:
-                bpy.data.images['target'].user_clear()
-                bpy.data.images.remove(bpy.data.images['target'])
-        
-            #create render target
-            bpy.ops.image.new(name="target", width= bjs.resolution_x, height = bjs.resolution_y, color=(0.0, 0.0, 0.0, 1.0), alpha=True, generated_type='BLANK', float=False)
-            #assign file path to render target
-            bpy.data.images['target'].filepath = bakepass.get_filepath(bjs)
-            bpy.data.scenes[0].cycles.bake_type = bakepass.pass_name
+
+        for i_job, bj in enumerate(bts.bake_job_queue):
             
-            clear = True
-            for i, pair in enumerate(bjs.bake_queue):
-                # make selections
-                bpy.ops.object.select_all(action='DESELECT')
-                # !!!! hardcoded scene name !!!!
-                if pair.hp_obj_vs_group == "GRP":
-                    for object in bpy.data.groups[pair.highpoly].objects:
-                        object.select = True
-                else:
-                    bpy.data.scenes["Scene"].objects[pair.highpoly].select = True
-                
-                bpy.data.scenes["Scene"].objects[pair.lowpoly].select = True
-                bpy.context.scene.objects.active = bpy.data.scenes["Scene"].objects[pair.lowpoly]
-                
-                if i>0:
-                    clear = False
-                
-                #bake
-                bpy.ops.object.bake(type=context.scene.cycles.bake_type, filepath="", width=bjs.resolution_x, height=bjs.resolution_y, margin=16, use_selected_to_active=True, cage_extrusion=1, cage_object="", normal_space='TANGENT', normal_r='POS_X', normal_g='POS_Y', normal_b='POS_Z', save_mode='INTERNAL', use_clear=clear, use_cage=False, use_split_materials=False, use_automatic_name=False)
+            #ensure save path exists
+            if not os.path.exists(bpy.path.abspath(bj.output)):
+                os.makedirs(bpy.path.abspath(bj.output))
             
-            #save resulting image
-            bpy.data.images['target'].save()
+            # bake_mat = context.active_object.active_material
+            
+            # #add an image node to the lowpoly model's material
+            # if "target" not in bake_mat.node_tree.nodes:
+                # imgnode = bake_mat.node_tree.nodes.new(type = "ShaderNodeTexImage")
+                # imgnode.image = bpy.data.images['target']
+                # imgnode.name = 'target'
+                # imgnode.label = 'target'
+            # else:
+                # imgnode = bake_mat.node_tree.nodes['target']
+                # imgnode.image = bpy.data.images['target']
+            
+            for i, bakepass in enumerate(bj.bake_pass_queue):
+                #get rid of old image
+                if 'target' in bpy.data.images:
+                    bpy.data.images['target'].user_clear()
+                    bpy.data.images.remove(bpy.data.images['target'])
+            
+                #create render target
+                bpy.ops.image.new(name="target", width= bj.resolution_x, height = bj.resolution_y, color=(0.0, 0.0, 0.0, 1.0), alpha=True, generated_type='BLANK', float=False)
+                #assign file path to render target
+                bpy.data.images['target'].filepath = bakepass.get_filepath(bj)
+                bpy.data.scenes[0].cycles.bake_type = bakepass.pass_name
+                
+                # bake_mat = context.active_object.active_material
+            
+                # #add an image node to the lowpoly model's material
+                # if "target" not in bake_mat.node_tree.nodes:
+                    # imgnode = bake_mat.node_tree.nodes.new(type = "ShaderNodeTexImage")
+                    # imgnode.image = bpy.data.images['target']
+                    # imgnode.name = 'target'
+                    # imgnode.label = 'target'
+                # else:
+                    # imgnode = bake_mat.node_tree.nodes['target']
+                    # imgnode.image = bpy.data.images['target']
+                
+                clear = True
+                for i, pair in enumerate(bj.bake_queue):
+                    # make selections
+                    bpy.ops.object.select_all(action='DESELECT')
+                    # !!!! hardcoded scene name !!!!
+                    if pair.hp_obj_vs_group == "GRP":
+                        for object in bpy.data.groups[pair.highpoly].objects:
+                            object.select = True
+                    else:
+                        bpy.data.scenes["Scene"].objects[pair.highpoly].select = True
+                    
+                    bpy.data.scenes["Scene"].objects[pair.lowpoly].select = True
+                    bpy.context.scene.objects.active = bpy.data.scenes["Scene"].objects[pair.lowpoly]
+                    
+                    #add an image node to the lowpoly model's material
+                    bake_mat = context.active_object.active_material
+                    if "target" not in bake_mat.node_tree.nodes:
+                        imgnode = bake_mat.node_tree.nodes.new(type = "ShaderNodeTexImage")
+                        imgnode.image = bpy.data.images['target']
+                        imgnode.name = 'target'
+                        imgnode.label = 'target'
+                    else:
+                        imgnode = bake_mat.node_tree.nodes['target']
+                        imgnode.image = bpy.data.images['target']
+                    
+                    if i>0:
+                        clear = False
+                    
+                    #bake
+                    bpy.ops.object.bake(type=context.scene.cycles.bake_type, filepath="", \
+                    width=bj.resolution_x, height=bj.resolution_y, margin=16, \
+                    use_selected_to_active=True, cage_extrusion=1, cage_object="", \
+                    normal_space='TANGENT', normal_r='POS_X', normal_g='POS_Y', normal_b='POS_Z', \
+                    save_mode='INTERNAL', use_clear=clear, use_cage=False, \
+                    use_split_materials=False, use_automatic_name=False)
+                
+                    bake_mat.node_tree.nodes.remove(imgnode)
+#                D.materials["Material.001"].node_tree.nodes.remove(D.materials["Material.001"].node_tree.nodes["target"])
+                #save resulting image
+                bpy.data.images['target'].save()
         
         #restore cycles device after bake
         bpy.data.scenes['Scene'].cycles.device = cycles_device
@@ -169,65 +205,81 @@ class BakeToolsPanel(bpy.types.Panel):
         layout = self.layout
         edit = context.user_preferences.edit
         wm = context.window_manager
-        bjs = context.scene.bakejob_settings
+        bts = context.scene.baketools_settings
         
         row = layout.row(align=True)
         row.alignment = 'EXPAND'
         row.operator("baketools.bake", text='Bake')
-        
-        row = layout.row(align=True)
-        row.alignment = 'EXPAND'
-        row.prop(bjs, 'resolution_x', text="X")
-        row.prop(bjs, 'resolution_y', text="Y")
-        
-        
-        row = layout.row(align=True)
-        row.alignment = 'EXPAND'
-        row.prop(bjs, 'output', text="Path")
-        
-        row = layout.row(align=True)
-        row.alignment = 'EXPAND'
-        row.prop(bjs, 'name', text="Name")
-        
-        for i, pair in enumerate(bjs.bake_queue):
-            box = layout.box().column(align=True)
-            row = box.row(align=True)
-            row.alignment = 'EXPAND'
-            row.prop_search(pair, "lowpoly", bpy.context.scene, "objects")
-                
-            row = box.row(align=True)
-            row.prop(pair, 'hp_obj_vs_group', expand=True)
-            if pair.hp_obj_vs_group == 'OBJ':
-                row.prop_search(pair, "highpoly", bpy.context.scene, "objects")
-            else:
-                row.prop_search(pair, "highpoly", bpy.data, "groups")
-            rem = row.operator("baketools.rem_pair", text = "", icon = "X")
-            rem.pair_index = i
-        
-        row = layout.row(align=True)
-        row.alignment = 'EXPAND'
-        row.operator("baketools.add_pair")
-        
-        for i, bakepass in enumerate(bjs.bake_pass_queue):
-            box = layout.box().column(align=True)
-            row = box.row(align=True)
-            row.alignment = 'EXPAND'
-            row.label(text=bakepass.get_filepath(bjs = bjs))
-            
-            rem = row.operator("baketools.rem_pass", text = "", icon = "X")
-            rem.pass_index = i
-            
-            row = box.row(align=True)
-            row.alignment = 'EXPAND'
-            row.prop(bakepass, 'pass_name')
-                        
-            row = box.row(align=True)
-            row.alignment = 'EXPAND'
-            row.prop(bakepass, 'suffix')
 
         row = layout.row(align=True)
         row.alignment = 'EXPAND'
-        row.operator("baketools.add_pass")
+        row.separator()
+        
+        for job_i, bj in enumerate(bts.bake_job_queue):        
+            row = layout.row(align=True)
+            row.alignment = 'EXPAND'
+            row.prop(bj, 'resolution_x', text="X")
+            row.prop(bj, 'resolution_y', text="Y")
+            
+            row = layout.row(align=True)
+            row.alignment = 'EXPAND'
+            row.prop(bj, 'output', text="Path")
+            
+            row = layout.row(align=True)
+            row.alignment = 'EXPAND'
+            row.prop(bj, 'name', text="Name")
+        
+            for pair_i, pair in enumerate(bj.bake_queue):
+                box = layout.box().column(align=True)
+                row = box.row(align=True)
+                row.alignment = 'EXPAND'
+                row.prop_search(pair, "lowpoly", bpy.context.scene, "objects")
+                    
+                row = box.row(align=True)
+                row.prop(pair, 'hp_obj_vs_group', expand=True)
+                if pair.hp_obj_vs_group == 'OBJ':
+                    row.prop_search(pair, "highpoly", bpy.context.scene, "objects")
+                else:
+                    row.prop_search(pair, "highpoly", bpy.data, "groups")
+                rem = row.operator("baketools.rem_pair", text = "", icon = "X")
+                rem.pair_index = pair_i
+                rem.job_index = job_i
+            
+            row = layout.row(align=True)
+            row.alignment = 'EXPAND'
+            addpair = row.operator("baketools.add_pair")
+            addpair.job_index = job_i
+            
+            for pass_i, bakepass in enumerate(bj.bake_pass_queue):
+                box = layout.box().column(align=True)
+                row = box.row(align=True)
+                row.alignment = 'EXPAND'
+                row.label(text=bakepass.get_filepath(bj = bj))
+                
+                rem = row.operator("baketools.rem_pass", text = "", icon = "X")
+                rem.pass_index = pass_i
+                rem.job_index = job_i
+                
+                row = box.row(align=True)
+                row.alignment = 'EXPAND'
+                row.prop(bakepass, 'pass_name')
+                            
+                row = box.row(align=True)
+                row.alignment = 'EXPAND'
+                row.prop(bakepass, 'suffix')
+
+            row = layout.row(align=True)
+            row.alignment = 'EXPAND'
+            addpass = row.operator("baketools.add_pass")
+            addpass.job_index = job_i
+            
+            row = layout.row(align=True)
+            row.alignment = 'EXPAND'
+            row.separator()
+            
+        row = layout.row(align=True)
+        row.alignment = 'EXPAND'
+        row.operator("baketools.add_job")
 
 class BakeToolsAddPairOp(bpy.types.Operator):
     '''add pair'''
@@ -235,8 +287,9 @@ class BakeToolsAddPairOp(bpy.types.Operator):
     bl_idname = "baketools.add_pair"
     bl_label = "Add Pair"
     
+    job_index = bpy.props.IntProperty()
     def execute(self, context):
-        bpy.data.scenes[0].bakejob_settings.bake_queue.add()
+        bpy.data.scenes[0].baketools_settings.bake_job_queue[self.job_index].bake_queue.add()
         
         return {'FINISHED'}
 
@@ -247,8 +300,9 @@ class BakeToolsRemPairOp(bpy.types.Operator):
     bl_label = "Remove Pair"
     
     pair_index = bpy.props.IntProperty()
+    job_index = bpy.props.IntProperty()
     def execute(self, context):
-        bpy.data.scenes[0].bakejob_settings.bake_queue.remove(self.pair_index)
+        bpy.data.scenes[0].baketools_settings.bake_job_queue[self.job_index].bake_queue.remove(self.pair_index)
         
         return {'FINISHED'}
         
@@ -258,8 +312,9 @@ class BakeToolsAddPassOp(bpy.types.Operator):
     bl_idname = "baketools.add_pass"
     bl_label = "Add Pass"
     
+    job_index = bpy.props.IntProperty()
     def execute(self, context):
-        bpy.data.scenes[0].bakejob_settings.bake_pass_queue.add()
+        bpy.data.scenes[0].baketools_settings.bake_job_queue[self.job_index].bake_pass_queue.add()
         return {'FINISHED'}
 
 class BakeToolsRemPassOp(bpy.types.Operator):
@@ -269,8 +324,30 @@ class BakeToolsRemPassOp(bpy.types.Operator):
     bl_label = "Remove Pass"
     
     pass_index = bpy.props.IntProperty()
+    job_index = bpy.props.IntProperty()
     def execute(self, context):
-        bpy.data.scenes[0].bakejob_settings.bake_pass_queue.remove(self.pass_index)
+        bpy.data.scenes[0].baketools_settings.bake_job_queue[self.job_index].bake_pass_queue.remove(self.pass_index)
+        return {'FINISHED'}
+
+class BakeToolsAddJobOp(bpy.types.Operator):
+    '''add job'''
+
+    bl_idname = "baketools.add_job"
+    bl_label = "Add Bake Job"
+    
+    def execute(self, context):
+        bpy.data.scenes[0].baketools_settings.bake_job_queue.add()
+        return {'FINISHED'}
+
+class BakeToolsRemJobOp(bpy.types.Operator):
+    '''delete job'''
+
+    bl_idname = "baketools.rem_job"
+    bl_label = "Remove Bake Job"
+    
+    job_index = bpy.props.IntProperty()
+    def execute(self, context):
+        bpy.data.scenes[0].baketools_settings.bake_job_queue.remove(self.pass_index)
         return {'FINISHED'}
     
 def register():
