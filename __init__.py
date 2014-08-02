@@ -17,8 +17,11 @@ from bpy.utils import register_class, unregister_class
 
 class BakePair(bpy.types.PropertyGroup):
     lowpoly = bpy.props.StringProperty(name="", description="", default="")
+    cage = bpy.props.StringProperty(name="", description="", default="")
     highpoly = bpy.props.StringProperty(name="", description="", default="")
-    hp_obj_vs_group = EnumProperty(name="Object or Group", description="", default="OBJ", items = [('OBJ', '', 'Object', 'MESH_CUBE', 0), ('GRP', '', 'Group', 'GROUP', 1)])
+    hp_obj_vs_group = EnumProperty(name="Object vs Group", description="", default="OBJ", items = [('OBJ', '', 'Object', 'MESH_CUBE', 0), ('GRP', '', 'Group', 'GROUP', 1)])
+    extrusion_vs_cage = EnumProperty(name="Extrusion vs Cage", description="", default="EXT", items = [('EXT', '', 'Extrusion', 'OUTLINER_DATA_META', 0), ('CAGE', '', 'Cage', 'OUTLINER_OB_LATTICE', 1)])
+    extrusion = bpy.props.FloatProperty(name="Extrusion", description="", default=0.5, min=0.0)
 register_class(BakePair)
 
 class BakePass(bpy.types.PropertyGroup):
@@ -112,18 +115,6 @@ class BakeToolsBakeOp(bpy.types.Operator):
             if not os.path.exists(bpy.path.abspath(bj.output)):
                 os.makedirs(bpy.path.abspath(bj.output))
             
-            # bake_mat = context.active_object.active_material
-            
-            # #add an image node to the lowpoly model's material
-            # if "target" not in bake_mat.node_tree.nodes:
-                # imgnode = bake_mat.node_tree.nodes.new(type = "ShaderNodeTexImage")
-                # imgnode.image = bpy.data.images['target']
-                # imgnode.name = 'target'
-                # imgnode.label = 'target'
-            # else:
-                # imgnode = bake_mat.node_tree.nodes['target']
-                # imgnode.image = bpy.data.images['target']
-            
             for i, bakepass in enumerate(bj.bake_pass_queue):
                 #get rid of old image
                 if 'target' in bpy.data.images:
@@ -135,18 +126,6 @@ class BakeToolsBakeOp(bpy.types.Operator):
                 #assign file path to render target
                 bpy.data.images['target'].filepath = bakepass.get_filepath(bj)
                 bpy.data.scenes[0].cycles.bake_type = bakepass.pass_name
-                
-                # bake_mat = context.active_object.active_material
-            
-                # #add an image node to the lowpoly model's material
-                # if "target" not in bake_mat.node_tree.nodes:
-                    # imgnode = bake_mat.node_tree.nodes.new(type = "ShaderNodeTexImage")
-                    # imgnode.image = bpy.data.images['target']
-                    # imgnode.name = 'target'
-                    # imgnode.label = 'target'
-                # else:
-                    # imgnode = bake_mat.node_tree.nodes['target']
-                    # imgnode.image = bpy.data.images['target']
                 
                 clear = True
                 for i, pair in enumerate(bj.bake_queue):
@@ -176,16 +155,20 @@ class BakeToolsBakeOp(bpy.types.Operator):
                     if i>0:
                         clear = False
                     
+                    if pair.extrusion_vs_cage == "CAGE":
+                        pair_use_cage = True
+                    else:
+                        pair_use_cage = False
+                    
                     #bake
                     bpy.ops.object.bake(type=context.scene.cycles.bake_type, filepath="", \
                     width=bj.resolution_x, height=bj.resolution_y, margin=16, \
-                    use_selected_to_active=True, cage_extrusion=1, cage_object="", \
+                    use_selected_to_active=True, cage_extrusion=pair.extrusion, cage_object=pair.cage, \
                     normal_space='TANGENT', normal_r='POS_X', normal_g='POS_Y', normal_b='POS_Z', \
-                    save_mode='INTERNAL', use_clear=clear, use_cage=False, \
+                    save_mode='INTERNAL', use_clear=clear, use_cage=pair_use_cage, \
                     use_split_materials=False, use_automatic_name=False)
                 
                     bake_mat.node_tree.nodes.remove(imgnode)
-#                D.materials["Material.001"].node_tree.nodes.remove(D.materials["Material.001"].node_tree.nodes["target"])
                 #save resulting image
                 bpy.data.images['target'].save()
         
@@ -241,6 +224,14 @@ class BakeToolsPanel(bpy.types.Panel):
                     row.prop_search(pair, "highpoly", bpy.context.scene, "objects")
                 else:
                     row.prop_search(pair, "highpoly", bpy.data, "groups")
+                row = box.row(align=True)
+                
+                row.prop(pair, 'extrusion_vs_cage', expand=True)
+                if pair.extrusion_vs_cage == "EXT":
+                    row.prop(pair, 'extrusion', expand=True)
+                else:
+                    row.prop_search(pair, "cage", bpy.context.scene, "objects")
+                
                 rem = row.operator("baketools.rem_pair", text = "", icon = "X")
                 rem.pair_index = pair_i
                 rem.job_index = job_i
