@@ -57,10 +57,63 @@ class BakePass(bpy.types.PropertyGroup):
                                             ("SUBSURFACE_COLOR","Subsurface Color","")))
     
     material_override = bpy.props.StringProperty(name="Material Override", description="", default="")
-    ao_distance = bpy.props.FloatProperty(name="Distance", description="", default=1.0)
+    ao_distance = bpy.props.FloatProperty(name="Distance", description="", default=10.0, min=0.0)
     samples = bpy.props.IntProperty(name="Samples", description="", default=1)
     suffix = bpy.props.StringProperty(name="Suffix", description="", default="")
-    
+
+    nm_space = bpy.props.EnumProperty(name = "Normal map space", default = "TANGENT",
+                                    items = (("TANGENT","Tangent",""),
+                                            ("OBJECT", "Object", "")))
+
+    normal_r = EnumProperty(name="R", description="", default="POS_X", 
+                                    items = (("POS_X", "X+", ""), 
+                                            ("NEG_X", "X-", ""),
+                                            ("POS_Y", "Y+", ""),
+                                            ("NEG_Y", "Y-", ""),
+                                            ("POS_Z", "Z+", ""),
+                                            ("NEG_Z", "Z-", "")))
+    normal_g = EnumProperty(name="G", description="", default="POS_Y", 
+                                    items = (("POS_X", "X+", ""), 
+                                            ("NEG_X", "X-", ""),
+                                            ("POS_Y", "Y+", ""),
+                                            ("NEG_Y", "Y-", ""),
+                                            ("POS_Z", "Z+", ""),
+                                            ("NEG_Z", "Z-", "")))
+    normal_b = EnumProperty(name="B", description="", default="POS_Z", 
+                                    items = (("POS_X", "X+", ""), 
+                                            ("NEG_X", "X-", ""),
+                                            ("POS_Y", "Y+", ""),
+                                            ("NEG_Y", "Y-", ""),
+                                            ("POS_Z", "Z+", ""),
+                                            ("NEG_Z", "Z-", "")))
+    def props(self):
+        props = set()
+        if self.pass_name == "COMBINED":
+            props = {"samples"}
+        if self.pass_name == "SHADOW":
+            props = {"samples"}
+        if self.pass_name == "AO":
+            props = {"ao_distance", "samples"}
+        if self.pass_name == "NORMAL":
+            props = {"nm_space", "swizzle"}
+        if self.pass_name == "DIFFUSE_DIRECT":
+            props = {"samples"}
+        if self.pass_name == "DIFFUSE_INDIRECT":
+            props = {"samples"}
+        if self.pass_name == "GLOSSY_DIRECT":
+            props = {"samples"}
+        if self.pass_name == "GLOSSY_INDIRECT":
+            props = {"samples"}
+        if self.pass_name == "TRANSMISSION_DIRECT":
+            props = {"samples"}
+        if self.pass_name == "TRANSMISSION_INDIRECT":
+            props = {"samples"}
+        if self.pass_name == "SUBSURFACE_DIRECT":
+            props = {"samples"}
+        if self.pass_name == "SUBSURFACE_INDIRECT":
+            props = {"samples"}            
+        return props
+        
     def get_filepath(self, bj):
         path = bj.output + bj.name 
         if len(self.suffix)>0:
@@ -72,10 +125,11 @@ register_class(BakePass)
                                             
     
 class BakeJob(bpy.types.PropertyGroup):
-    resolution_x = bpy.props.IntProperty(name="Resolution X",
-                                                default = 1024)
-    resolution_y = bpy.props.IntProperty(name="Resolution Y",
-                                                default = 1024)
+    resolution_x = bpy.props.IntProperty(name="Resolution X", default = 1024)
+    resolution_y = bpy.props.IntProperty(name="Resolution Y", default = 1024)
+    
+    margin = bpy.props.IntProperty(name="Margin", default = 16, min = 0)
+    
     output = bpy.props.StringProperty(name = 'File path',
                             description = 'The path of the output image.',
                             default = '//textures/',
@@ -122,10 +176,14 @@ class BakeToolsBakeOp(bpy.types.Operator):
                     bpy.data.images.remove(bpy.data.images['target'])
             
                 #create render target
-                bpy.ops.image.new(name="target", width= bj.resolution_x, height = bj.resolution_y, color=(0.0, 0.0, 0.0, 1.0), alpha=True, generated_type='BLANK', float=False)
+                bpy.ops.image.new(name="target", width= bj.resolution_x, height = bj.resolution_y, \
+                                    color=(0.0, 0.0, 0.0, 1.0), alpha=True, generated_type='BLANK', float=False)
                 #assign file path to render target
                 bpy.data.images['target'].filepath = bakepass.get_filepath(bj)
                 bpy.data.scenes[0].cycles.bake_type = bakepass.pass_name
+                bpy.data.scenes[0].cycles.samples = bakepass.samples
+                bpy.data.worlds[0].light_settings.distance = bakepass.ao_distance
+                #print ("Cycles samples = " + str(bpy.data.scenes[0].cycles.samples))
                 
                 clear = True
                 for i, pair in enumerate(bj.bake_queue):
@@ -162,9 +220,10 @@ class BakeToolsBakeOp(bpy.types.Operator):
                     
                     #bake
                     bpy.ops.object.bake(type=context.scene.cycles.bake_type, filepath="", \
-                    width=bj.resolution_x, height=bj.resolution_y, margin=16, \
+                    width=bj.resolution_x, height=bj.resolution_y, margin=bj.margin, \
                     use_selected_to_active=True, cage_extrusion=pair.extrusion, cage_object=pair.cage, \
-                    normal_space='TANGENT', normal_r='POS_X', normal_g='POS_Y', normal_b='POS_Z', \
+                    normal_space=bakepass.nm_space, \
+                    normal_r=bakepass.normal_r, normal_g=bakepass.normal_g, normal_b=bakepass.normal_b, \
                     save_mode='INTERNAL', use_clear=clear, use_cage=pair_use_cage, \
                     use_split_materials=False, use_automatic_name=False)
                 
@@ -192,17 +251,29 @@ class BakeToolsPanel(bpy.types.Panel):
         
         row = layout.row(align=True)
         row.alignment = 'EXPAND'
-        row.operator("baketools.bake", text='Bake')
+        row.operator("baketools.bake", text='Bake', icon = "RADIO")
 
         row = layout.row(align=True)
         row.alignment = 'EXPAND'
         row.separator()
         
-        for job_i, bj in enumerate(bts.bake_job_queue):        
+        for job_i, bj in enumerate(bts.bake_job_queue):
+            
+            row = layout.row(align=True)
+            row.alignment = 'EXPAND'
+            row.label(text="Bake Job " + str(job_i+1))
+
+            rem = row.operator("baketools.rem_job", text = "", icon = "X")
+            rem.job_index = job_i            
+            
             row = layout.row(align=True)
             row.alignment = 'EXPAND'
             row.prop(bj, 'resolution_x', text="X")
             row.prop(bj, 'resolution_y', text="Y")
+            
+            row = layout.row(align=True)
+            row.alignment = 'EXPAND'
+            row.prop(bj, 'margin', text="Margin")
             
             row = layout.row(align=True)
             row.alignment = 'EXPAND'
@@ -238,7 +309,7 @@ class BakeToolsPanel(bpy.types.Panel):
             
             row = layout.row(align=True)
             row.alignment = 'EXPAND'
-            addpair = row.operator("baketools.add_pair")
+            addpair = row.operator("baketools.add_pair", icon = "DISCLOSURE_TRI_RIGHT")
             addpair.job_index = job_i
             
             for pass_i, bakepass in enumerate(bj.bake_pass_queue):
@@ -258,10 +329,38 @@ class BakeToolsPanel(bpy.types.Panel):
                 row = box.row(align=True)
                 row.alignment = 'EXPAND'
                 row.prop(bakepass, 'suffix')
+                
+                if len(bakepass.props())>0:
+                    row = box.row(align=True)
+                    row.alignment = 'EXPAND'
+                    row.separator()
+
+                    if "ao_distance" in bakepass.props():
+                        row = box.row(align=True)
+                        row.alignment = 'EXPAND'
+                        row.prop(bakepass, 'ao_distance', text = "AO Distance")
+                        
+                    if "nm_space" in bakepass.props():
+                        row = box.row(align=True)
+                        row.alignment = 'EXPAND'
+                        row.prop(bakepass, 'nm_space', text = "type")
+
+                    if "swizzle" in bakepass.props():
+                        row = box.row(align=True)
+                        row.alignment = 'EXPAND'
+                        row.label(text="Swizzle")
+                        row.prop(bakepass, 'normal_r', text = "")
+                        row.prop(bakepass, 'normal_g', text = "")
+                        row.prop(bakepass, 'normal_b', text = "")
+                        
+                    if "samples" in bakepass.props():
+                        row = box.row(align=True)
+                        row.alignment = 'EXPAND'
+                        row.prop(bakepass, 'samples', text = "Samples")                        
 
             row = layout.row(align=True)
             row.alignment = 'EXPAND'
-            addpass = row.operator("baketools.add_pass")
+            addpass = row.operator("baketools.add_pass", icon = "DISCLOSURE_TRI_RIGHT")
             addpass.job_index = job_i
             
             row = layout.row(align=True)
@@ -270,7 +369,7 @@ class BakeToolsPanel(bpy.types.Panel):
             
         row = layout.row(align=True)
         row.alignment = 'EXPAND'
-        row.operator("baketools.add_job")
+        row.operator("baketools.add_job", icon = "ZOOMIN")
 
 class BakeToolsAddPairOp(bpy.types.Operator):
     '''add pair'''
@@ -338,7 +437,7 @@ class BakeToolsRemJobOp(bpy.types.Operator):
     
     job_index = bpy.props.IntProperty()
     def execute(self, context):
-        bpy.data.scenes[0].baketools_settings.bake_job_queue.remove(self.pass_index)
+        bpy.data.scenes[0].baketools_settings.bake_job_queue.remove(self.job_index)
         return {'FINISHED'}
     
 def register():
