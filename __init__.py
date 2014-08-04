@@ -236,7 +236,7 @@ class BakeToolsBakeOp(bpy.types.Operator):
                         temp_mat = bpy.data.materials.new("BakeToolsTempMat")
                         temp_mat.use_nodes = True
                         bpy.data.scenes["Scene"].objects[pair.lowpoly].data.materials.append(temp_mat)
-                        bpy.data.scenes["Scene"].objects["lowpoly"].active_material = temp_mat
+                        bpy.data.scenes["Scene"].objects[pair.lowpoly].active_material = temp_mat
                     
                     #add an image node to the lowpoly model's material
                     bake_mat = context.active_object.active_material
