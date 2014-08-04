@@ -10,6 +10,7 @@ bl_info = {
     "tracker_url": "",
     "category": "Baking"}
 
+import code
 import os
 import bpy
 from bpy.props import *
@@ -115,11 +116,21 @@ class BakePass(bpy.types.PropertyGroup):
         return props
         
     def get_filepath(self, bj):
-        path = bj.output + bj.name 
+        path = bj.output 
+        if path[-1:] != "/":
+            path = path + "/"
+        path = path + bj.name 
         if len(self.suffix)>0:
             path += "_" + self.suffix
         path += ".png"
         return path
+
+    def get_filename(self, bj):
+        name = bj.name 
+        if len(self.suffix)>0:
+            name += "_" + self.suffix
+        name += ".png"
+        return name        
     
 register_class(BakePass)
                                             
@@ -170,45 +181,54 @@ class BakeToolsBakeOp(bpy.types.Operator):
                 os.makedirs(bpy.path.abspath(bj.output))
             
             for i, bakepass in enumerate(bj.bake_pass_queue):
-                #get rid of old image
-                if 'target' in bpy.data.images:
-                    bpy.data.images['target'].user_clear()
-                    bpy.data.images.remove(bpy.data.images['target'])
-            
                 #create render target
-                bpy.ops.image.new(name="target", width= bj.resolution_x, height = bj.resolution_y, \
-                                    color=(0.0, 0.0, 0.0, 1.0), alpha=True, generated_type='BLANK', float=False)
+                if "BTtarget" not in bpy.data.images:
+                    bpy.ops.image.new(name="BTtarget", width= bj.resolution_x, height = bj.resolution_y, \
+                                        color=(0.0, 0.0, 0.0, 1.0), alpha=True, generated_type='BLANK', float=False)
+                baketarget = bpy.data.images["BTtarget"]
                 #assign file path to render target
-                bpy.data.images['target'].filepath = bakepass.get_filepath(bj)
+                baketarget.filepath = bakepass.get_filepath(bj)
+                
+                #copy pass settings to cycles settings
                 bpy.data.scenes[0].cycles.bake_type = bakepass.pass_name
                 bpy.data.scenes[0].cycles.samples = bakepass.samples
                 bpy.data.worlds[0].light_settings.distance = bakepass.ao_distance
-                #print ("Cycles samples = " + str(bpy.data.scenes[0].cycles.samples))
                 
+                #first pair clears the image
                 clear = True
                 for i, pair in enumerate(bj.bake_queue):
                     # make selections
                     bpy.ops.object.select_all(action='DESELECT')
-                    # !!!! hardcoded scene name !!!!
                     if pair.hp_obj_vs_group == "GRP":
                         for object in bpy.data.groups[pair.highpoly].objects:
                             object.select = True
                     else:
-                        bpy.data.scenes["Scene"].objects[pair.highpoly].select = True
+                        bpy.data.scenes[0].objects[pair.highpoly].select = True
                     
-                    bpy.data.scenes["Scene"].objects[pair.lowpoly].select = True
+                    bpy.data.scenes[0].objects[pair.lowpoly].select = True
                     bpy.context.scene.objects.active = bpy.data.scenes["Scene"].objects[pair.lowpoly]
+                    
+                    #ensure lowpoly has material
+                    if len(bpy.data.scenes[0].objects[pair.lowpoly].data.materials) == 0 \
+                        or bpy.data.scenes[0].objects[pair.lowpoly].material_slots[0].material == None:
+                        no_materials = True
+                        temp_mat = bpy.data.materials.new("BakeToolsTempMat")
+                        temp_mat.use_nodes = True
+                        bpy.data.scenes["Scene"].objects[pair.lowpoly].data.materials.append(temp_mat)
+                        bpy.data.scenes["Scene"].objects["lowpoly"].active_material = temp_mat
                     
                     #add an image node to the lowpoly model's material
                     bake_mat = context.active_object.active_material
+                    
+                    #code.interact(local=locals())
                     if "target" not in bake_mat.node_tree.nodes:
                         imgnode = bake_mat.node_tree.nodes.new(type = "ShaderNodeTexImage")
-                        imgnode.image = bpy.data.images['target']
+                        imgnode.image = baketarget
                         imgnode.name = 'target'
                         imgnode.label = 'target'
                     else:
                         imgnode = bake_mat.node_tree.nodes['target']
-                        imgnode.image = bpy.data.images['target']
+                        imgnode.image = baketarget
                     
                     if i>0:
                         clear = False
@@ -228,9 +248,26 @@ class BakeToolsBakeOp(bpy.types.Operator):
                     use_split_materials=False, use_automatic_name=False)
                 
                     bake_mat.node_tree.nodes.remove(imgnode)
+                    
+                    if no_materials:
+                        bpy.data.scenes["Scene"].objects[pair.lowpoly].data.materials.clear()
+                        #bpy.ops.object.material_slot_select()
+                        bpy.ops.object.material_slot_remove()
+                        
+                    
                 #save resulting image
-                bpy.data.images['target'].save()
-        
+                baketarget.save()
+                
+                #unlink from image editors
+                for wm in bpy.data.window_managers:
+                    for window in wm.windows:
+                        for area in window.screen.areas:
+                            if area.type == "IMAGE_EDITOR":
+                                area.spaces[0].image = None
+                #remove image
+                baketarget.user_clear()
+                bpy.data.images.remove(baketarget)
+                
         #restore cycles device after bake
         bpy.data.scenes['Scene'].cycles.device = cycles_device
         
