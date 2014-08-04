@@ -226,7 +226,7 @@ class BakeToolsBakeOp(bpy.types.Operator):
                         bpy.data.scenes[0].objects[pair.highpoly].select = True
                     
                     bpy.data.scenes[0].objects[pair.lowpoly].select = True
-                    bpy.context.scene.objects.active = bpy.data.scenes["Scene"].objects[pair.lowpoly]
+                    bpy.context.scene.objects.active = bpy.data.scenes[0].objects[pair.lowpoly]
                     
                     no_materials = False
                     #ensure lowpoly has material
@@ -235,8 +235,8 @@ class BakeToolsBakeOp(bpy.types.Operator):
                         no_materials = True
                         temp_mat = bpy.data.materials.new("BakeToolsTempMat")
                         temp_mat.use_nodes = True
-                        bpy.data.scenes["Scene"].objects[pair.lowpoly].data.materials.append(temp_mat)
-                        bpy.data.scenes["Scene"].objects[pair.lowpoly].active_material = temp_mat
+                        bpy.data.scenes[0].objects[pair.lowpoly].data.materials.append(temp_mat)
+                        bpy.data.scenes[0].objects[pair.lowpoly].active_material = temp_mat
                     
                     #add an image node to the lowpoly model's material
                     bake_mat = context.active_object.active_material
@@ -271,7 +271,7 @@ class BakeToolsBakeOp(bpy.types.Operator):
                     bake_mat.node_tree.nodes.remove(imgnode)
                     
                     if no_materials:
-                        bpy.data.scenes["Scene"].objects[pair.lowpoly].data.materials.clear()
+                        bpy.data.scenes[0].objects[pair.lowpoly].data.materials.clear()
                         #bpy.ops.object.material_slot_select()
                         bpy.ops.object.material_slot_remove()
                         
