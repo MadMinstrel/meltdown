@@ -43,6 +43,7 @@ class BakePair(bpy.types.PropertyGroup):
     hp_obj_vs_group = EnumProperty(name="Object vs Group", description="", default="OBJ", items = [('OBJ', '', 'Object', 'MESH_CUBE', 0), ('GRP', '', 'Group', 'GROUP', 1)])
     extrusion_vs_cage = EnumProperty(name="Extrusion vs Cage", description="", default="EXT", items = [('EXT', '', 'Extrusion', 'OUTLINER_DATA_META', 0), ('CAGE', '', 'Cage', 'OUTLINER_OB_LATTICE', 1)])
     extrusion = bpy.props.FloatProperty(name="Extrusion", description="", default=0.5, min=0.0)
+    use_hipoly = bpy.props.BoolProperty(name="Use Hipoly", default = True)
 register_class(BakePair)
 
 class BakePass(bpy.types.PropertyGroup):
@@ -219,11 +220,14 @@ class MeltdownBakeOp(bpy.types.Operator):
                 for i, pair in enumerate(bj.bake_queue):
                     # make selections
                     bpy.ops.object.select_all(action='DESELECT')
-                    if pair.hp_obj_vs_group == "GRP":
-                        for object in bpy.data.groups[pair.highpoly].objects:
-                            object.select = True
+                    if pair.highpoly != "":
+                        if pair.hp_obj_vs_group == "GRP":
+                            for object in bpy.data.groups[pair.highpoly].objects:
+                                object.select = True
+                        else:
+                            bpy.data.scenes[0].objects[pair.highpoly].select = True
                     else:
-                        bpy.data.scenes[0].objects[pair.highpoly].select = True
+                        pair.use_hipoly = False
                     
                     bpy.data.scenes[0].objects[pair.lowpoly].select = True
                     bpy.context.scene.objects.active = bpy.data.scenes[0].objects[pair.lowpoly]
@@ -262,7 +266,7 @@ class MeltdownBakeOp(bpy.types.Operator):
                     #bake
                     bpy.ops.object.bake(type=context.scene.cycles.bake_type, filepath="", \
                     width=bj.resolution_x, height=bj.resolution_y, margin=bj.margin, \
-                    use_selected_to_active=True, cage_extrusion=pair.extrusion, cage_object=pair.cage, \
+                    use_selected_to_active=pair.use_hipoly, cage_extrusion=pair.extrusion, cage_object=pair.cage, \
                     normal_space=bakepass.nm_space, \
                     normal_r=bakepass.normal_r, normal_g=bakepass.normal_g, normal_b=bakepass.normal_b, \
                     save_mode='INTERNAL', use_clear=clear, use_cage=pair_use_cage, \
