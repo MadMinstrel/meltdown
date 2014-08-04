@@ -228,6 +228,7 @@ class BakeToolsBakeOp(bpy.types.Operator):
                     bpy.data.scenes[0].objects[pair.lowpoly].select = True
                     bpy.context.scene.objects.active = bpy.data.scenes["Scene"].objects[pair.lowpoly]
                     
+                    no_materials = False
                     #ensure lowpoly has material
                     if len(bpy.data.scenes[0].objects[pair.lowpoly].data.materials) == 0 \
                         or bpy.data.scenes[0].objects[pair.lowpoly].material_slots[0].material == None:
