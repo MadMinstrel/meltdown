@@ -19,7 +19,7 @@
 # ##### END GPL LICENSE BLOCK #####
 
 bl_info = {
-    "name": "Bake Tools",
+    "name": "Meltdown",
     "author": "Piotr Adamowicz",
     "version": (0, 2),
     "blender": (2, 7, 1),
@@ -27,7 +27,7 @@ bl_info = {
     "description": "Improved baking UI",
     "warning": "",
     "wiki_url": "",
-    "tracker_url": "https://github.com/MadMinstrel/bake-tools/issues",
+    "tracker_url": "https://github.com/MadMinstrel/meltdown/issues",
     "category": "Baking"}
 
 import code
@@ -174,27 +174,27 @@ class BakeJob(bpy.types.PropertyGroup):
     
 register_class(BakeJob)
 
-class BakeToolsSettings(bpy.types.PropertyGroup):
+class MeltdownSettings(bpy.types.PropertyGroup):
     bl_idname = __name__
     bake_job_queue = bpy.props.CollectionProperty(type=BakeJob)
     
-register_class(BakeToolsSettings)
-bpy.types.Scene.baketools_settings = PointerProperty(type = BakeToolsSettings)
+register_class(MeltdownSettings)
+bpy.types.Scene.meltdown_settings = PointerProperty(type = MeltdownSettings)
 
-class BakeToolsBakeOp(bpy.types.Operator):
-    '''Bake'''
+class MeltdownBakeOp(bpy.types.Operator):
+    '''Meltdown'''
 
-    bl_idname = "baketools.bake"
-    bl_label = "Bake"
+    bl_idname = "meltdown.bake"
+    bl_label = "Meltdown"
     
     def execute(self, context):
-        bts = context.scene.baketools_settings
+        mds = context.scene.meltdown_settings
         
         #cycles baking currently crashes on gpu bake
         cycles_device = bpy.data.scenes['Scene'].cycles.device
         bpy.data.scenes['Scene'].cycles.device = 'CPU'
 
-        for i_job, bj in enumerate(bts.bake_job_queue):
+        for i_job, bj in enumerate(mds.bake_job_queue):
             
             #ensure save path exists
             if not os.path.exists(bpy.path.abspath(bj.output)):
@@ -202,10 +202,10 @@ class BakeToolsBakeOp(bpy.types.Operator):
             
             for i, bakepass in enumerate(bj.bake_pass_queue):
                 #create render target
-                if "BTtarget" not in bpy.data.images:
-                    bpy.ops.image.new(name="BTtarget", width= bj.resolution_x, height = bj.resolution_y, \
+                if "MDtarget" not in bpy.data.images:
+                    bpy.ops.image.new(name="MDtarget", width= bj.resolution_x, height = bj.resolution_y, \
                                         color=(0.0, 0.0, 0.0, 1.0), alpha=True, generated_type='BLANK', float=False)
-                baketarget = bpy.data.images["BTtarget"]
+                baketarget = bpy.data.images["MDtarget"]
                 #assign file path to render target
                 baketarget.filepath = bakepass.get_filepath(bj)
                 
@@ -233,7 +233,7 @@ class BakeToolsBakeOp(bpy.types.Operator):
                     if len(bpy.data.scenes[0].objects[pair.lowpoly].data.materials) == 0 \
                         or bpy.data.scenes[0].objects[pair.lowpoly].material_slots[0].material == None:
                         no_materials = True
-                        temp_mat = bpy.data.materials.new("BakeToolsTempMat")
+                        temp_mat = bpy.data.materials.new("MeltdownTempMat")
                         temp_mat.use_nodes = True
                         bpy.data.scenes[0].objects[pair.lowpoly].data.materials.append(temp_mat)
                         bpy.data.scenes[0].objects[pair.lowpoly].active_material = temp_mat
@@ -294,9 +294,9 @@ class BakeToolsBakeOp(bpy.types.Operator):
         
         return {'FINISHED'}
 
-class BakeToolsPanel(bpy.types.Panel):
-    bl_label = "Bake Tools"
-    bl_idname = "OBJECT_PT_baketools"
+class MeltdownPanel(bpy.types.Panel):
+    bl_label = "Meltdown bake tools"
+    bl_idname = "OBJECT_PT_meltdown"
     bl_space_type = "PROPERTIES"
     bl_region_type = "WINDOW"
     bl_context = "render"
@@ -305,23 +305,23 @@ class BakeToolsPanel(bpy.types.Panel):
         layout = self.layout
         edit = context.user_preferences.edit
         wm = context.window_manager
-        bts = context.scene.baketools_settings
+        mds = context.scene.meltdown_settings
         
         row = layout.row(align=True)
         row.alignment = 'EXPAND'
-        row.operator("baketools.bake", text='Bake', icon = "RADIO")
+        row.operator("meltdown.bake", text='Meltdown', icon = "RADIO")
 
         row = layout.row(align=True)
         row.alignment = 'EXPAND'
         row.separator()
         
-        for job_i, bj in enumerate(bts.bake_job_queue):
+        for job_i, bj in enumerate(mds.bake_job_queue):
             
             row = layout.row(align=True)
             row.alignment = 'EXPAND'
             row.label(text="Bake Job " + str(job_i+1))
 
-            rem = row.operator("baketools.rem_job", text = "", icon = "X")
+            rem = row.operator("meltdown.rem_job", text = "", icon = "X")
             rem.job_index = job_i            
             
             row = layout.row(align=True)
@@ -361,13 +361,13 @@ class BakeToolsPanel(bpy.types.Panel):
                 else:
                     row.prop_search(pair, "cage", bpy.context.scene, "objects")
                 
-                rem = row.operator("baketools.rem_pair", text = "", icon = "X")
+                rem = row.operator("meltdown.rem_pair", text = "", icon = "X")
                 rem.pair_index = pair_i
                 rem.job_index = job_i
             
             row = layout.row(align=True)
             row.alignment = 'EXPAND'
-            addpair = row.operator("baketools.add_pair", icon = "DISCLOSURE_TRI_RIGHT")
+            addpair = row.operator("meltdown.add_pair", icon = "DISCLOSURE_TRI_RIGHT")
             addpair.job_index = job_i
             
             for pass_i, bakepass in enumerate(bj.bake_pass_queue):
@@ -376,7 +376,7 @@ class BakeToolsPanel(bpy.types.Panel):
                 row.alignment = 'EXPAND'
                 row.label(text=bakepass.get_filepath(bj = bj))
                 
-                rem = row.operator("baketools.rem_pass", text = "", icon = "X")
+                rem = row.operator("meltdown.rem_pass", text = "", icon = "X")
                 rem.pass_index = pass_i
                 rem.job_index = job_i
                 
@@ -418,7 +418,7 @@ class BakeToolsPanel(bpy.types.Panel):
 
             row = layout.row(align=True)
             row.alignment = 'EXPAND'
-            addpass = row.operator("baketools.add_pass", icon = "DISCLOSURE_TRI_RIGHT")
+            addpass = row.operator("meltdown.add_pass", icon = "DISCLOSURE_TRI_RIGHT")
             addpass.job_index = job_i
             
             row = layout.row(align=True)
@@ -427,75 +427,75 @@ class BakeToolsPanel(bpy.types.Panel):
             
         row = layout.row(align=True)
         row.alignment = 'EXPAND'
-        row.operator("baketools.add_job", icon = "ZOOMIN")
+        row.operator("meltdown.add_job", icon = "ZOOMIN")
 
-class BakeToolsAddPairOp(bpy.types.Operator):
+class MeltdownAddPairOp(bpy.types.Operator):
     '''add pair'''
 
-    bl_idname = "baketools.add_pair"
+    bl_idname = "meltdown.add_pair"
     bl_label = "Add Pair"
     
     job_index = bpy.props.IntProperty()
     def execute(self, context):
-        bpy.data.scenes[0].baketools_settings.bake_job_queue[self.job_index].bake_queue.add()
+        bpy.data.scenes[0].meltdown_settings.bake_job_queue[self.job_index].bake_queue.add()
         
         return {'FINISHED'}
 
-class BakeToolsRemPairOp(bpy.types.Operator):
+class MeltdownRemPairOp(bpy.types.Operator):
     '''delete pair'''
 
-    bl_idname = "baketools.rem_pair"
+    bl_idname = "meltdown.rem_pair"
     bl_label = "Remove Pair"
     
     pair_index = bpy.props.IntProperty()
     job_index = bpy.props.IntProperty()
     def execute(self, context):
-        bpy.data.scenes[0].baketools_settings.bake_job_queue[self.job_index].bake_queue.remove(self.pair_index)
+        bpy.data.scenes[0].meltdown_settings.bake_job_queue[self.job_index].bake_queue.remove(self.pair_index)
         
         return {'FINISHED'}
         
-class BakeToolsAddPassOp(bpy.types.Operator):
+class MeltdownAddPassOp(bpy.types.Operator):
     '''add pass'''
 
-    bl_idname = "baketools.add_pass"
+    bl_idname = "meltdown.add_pass"
     bl_label = "Add Pass"
     
     job_index = bpy.props.IntProperty()
     def execute(self, context):
-        bpy.data.scenes[0].baketools_settings.bake_job_queue[self.job_index].bake_pass_queue.add()
+        bpy.data.scenes[0].meltdown_settings.bake_job_queue[self.job_index].bake_pass_queue.add()
         return {'FINISHED'}
 
-class BakeToolsRemPassOp(bpy.types.Operator):
+class MeltdownRemPassOp(bpy.types.Operator):
     '''delete pass'''
 
-    bl_idname = "baketools.rem_pass"
+    bl_idname = "meltdown.rem_pass"
     bl_label = "Remove Pass"
     
     pass_index = bpy.props.IntProperty()
     job_index = bpy.props.IntProperty()
     def execute(self, context):
-        bpy.data.scenes[0].baketools_settings.bake_job_queue[self.job_index].bake_pass_queue.remove(self.pass_index)
+        bpy.data.scenes[0].meltdown_settings.bake_job_queue[self.job_index].bake_pass_queue.remove(self.pass_index)
         return {'FINISHED'}
 
-class BakeToolsAddJobOp(bpy.types.Operator):
+class MeltdownAddJobOp(bpy.types.Operator):
     '''add job'''
 
-    bl_idname = "baketools.add_job"
+    bl_idname = "meltdown.add_job"
     bl_label = "Add Bake Job"
     
     def execute(self, context):
-        bpy.data.scenes[0].baketools_settings.bake_job_queue.add()
+        bpy.data.scenes[0].meltdown_settings.bake_job_queue.add()
         return {'FINISHED'}
 
-class BakeToolsRemJobOp(bpy.types.Operator):
+class MeltdownRemJobOp(bpy.types.Operator):
     '''delete job'''
 
-    bl_idname = "baketools.rem_job"
+    bl_idname = "meltdown.rem_job"
     bl_label = "Remove Bake Job"
     
     job_index = bpy.props.IntProperty()
     def execute(self, context):
-        bpy.data.scenes[0].baketools_settings.bake_job_queue.remove(self.job_index)
+        bpy.data.scenes[0].meltdown_settings.bake_job_queue.remove(self.job_index)
         return {'FINISHED'}
     
 def register():
