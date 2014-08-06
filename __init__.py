@@ -37,9 +37,10 @@ from bpy.props import *
 from bpy.utils import register_class, unregister_class
 
 class BakePair(bpy.types.PropertyGroup):
-    lowpoly = bpy.props.StringProperty(name="", description="", default="")
-    cage = bpy.props.StringProperty(name="", description="", default="")
-    highpoly = bpy.props.StringProperty(name="", description="", default="")
+    activated = bpy.props.BoolProperty(name = "Activated", description="Pair on/off", default = True)
+    lowpoly = bpy.props.StringProperty(name="", description="Lowpoly mesh", default="")
+    cage = bpy.props.StringProperty(name="", description="Cage mesh", default="")
+    highpoly = bpy.props.StringProperty(name="", description="Highpoly mesh", default="")
     hp_obj_vs_group = EnumProperty(name="Object vs Group", description="", default="OBJ", items = [('OBJ', '', 'Object', 'MESH_CUBE', 0), ('GRP', '', 'Group', 'GROUP', 1)])
     extrusion_vs_cage = EnumProperty(name="Extrusion vs Cage", description="", default="EXT", items = [('EXT', '', 'Extrusion', 'OUTLINER_DATA_META', 0), ('CAGE', '', 'Cage', 'OUTLINER_OB_LATTICE', 1)])
     extrusion = bpy.props.FloatProperty(name="Extrusion", description="", default=0.5, min=0.0)
@@ -48,6 +49,8 @@ class BakePair(bpy.types.PropertyGroup):
 register_class(BakePair)
 
 class BakePass(bpy.types.PropertyGroup):
+    activated = bpy.props.BoolProperty(name = "Activated", default = True)
+    pair_counter = bpy.props.IntProperty(name="Pair Counter", description="", default=0)
     pass_name = bpy.props.EnumProperty(name = "Pass", default = "NORMAL",
                                     items = (("COMBINED","Combined",""),
                                             #("Z","Depth",""),
@@ -158,6 +161,8 @@ register_class(BakePass)
                                             
     
 class BakeJob(bpy.types.PropertyGroup):
+    activated = bpy.props.BoolProperty(name = "Activated", default = True)
+    expand = bpy.props.BoolProperty(name = "Expand", default = True)
     resolution_x = bpy.props.IntProperty(name="Resolution X", default = 1024)
     resolution_y = bpy.props.IntProperty(name="Resolution Y", default = 1024)
     
@@ -288,8 +293,9 @@ class MeltdownBakeOp(bpy.types.Operator):
             pair_use_cage = False
         
         clear = True
-        if self.pair > 0:
+        if bakepass.pair_counter > 0:
             clear = False
+        bakepass.pair_counter = bakepass.pair_counter + 1
         
         #bake
         bpy.ops.object.bake(type=bpy.context.scene.cycles.bake_type, filepath="", \
@@ -318,11 +324,16 @@ class MeltdownBakeOp(bpy.types.Operator):
         bpy.data.scenes[0].cycles.bake_type = bakepass.pass_name
         bpy.data.scenes[0].cycles.samples = bakepass.samples
         bpy.data.worlds[0].light_settings.distance = bakepass.ao_distance
-
+        
+        #the pair counter is used to determine whether to clear the image
+        #set it to 0 after each bake pass
+        bakepass.pair_counter = 0
+        
         for i_pair, pair in enumerate(bj.bake_queue):
-            self.pair = i_pair
-            self.bake_set()
-            
+            if pair.activated == True:
+                self.pair = i_pair
+                self.bake_set()
+    
         self.cleanup_render_target()
             
     
@@ -334,27 +345,17 @@ class MeltdownBakeOp(bpy.types.Operator):
         bpy.data.scenes['Scene'].cycles.device = 'CPU'
 
         for i_job, bj in enumerate(mds.bake_job_queue):
-            self.job = i_job
-            
-            #ensure save path exists
-            if not os.path.exists(bpy.path.abspath(bj.output)):
-                os.makedirs(bpy.path.abspath(bj.output))
-            
-            for i_pass, bakepass in enumerate(bj.bake_pass_queue):
-                self.bakepass = i_pass
-                self.bake_pass()
-                # self.create_render_target()
+            if bj.activated == True:
+                self.job = i_job
                 
-                # copy pass settings to cycles settings
-                # bpy.data.scenes[0].cycles.bake_type = bakepass.pass_name
-                # bpy.data.scenes[0].cycles.samples = bakepass.samples
-                # bpy.data.worlds[0].light_settings.distance = bakepass.ao_distance
-
-                # for i_pair, pair in enumerate(bj.bake_queue):
-                    # self.pair = i_pair
-                    # self.bake_set()
-                    
-                # self.cleanup_render_target()
+                #ensure save path exists
+                if not os.path.exists(bpy.path.abspath(bj.output)):
+                    os.makedirs(bpy.path.abspath(bj.output))
+                
+                for i_pass, bakepass in enumerate(bj.bake_pass_queue):
+                    if bakepass.activated == True:
+                        self.bakepass = i_pass
+                        self.bake_pass()
                 
         #restore cycles device after bake
         bpy.data.scenes['Scene'].cycles.device = cycles_device
@@ -386,111 +387,154 @@ class MeltdownPanel(bpy.types.Panel):
             
             row = layout.row(align=True)
             row.alignment = 'EXPAND'
-            row.label(text="Bake Job " + str(job_i+1))
-
-            rem = row.operator("meltdown.rem_job", text = "", icon = "X")
-            rem.job_index = job_i            
             
-            row = layout.row(align=True)
-            row.alignment = 'EXPAND'
-            row.prop(bj, 'resolution_x', text="X")
-            row.prop(bj, 'resolution_y', text="Y")
-            
-            row = layout.row(align=True)
-            row.alignment = 'EXPAND'
-            row.prop(bj, 'margin', text="Margin")
-            
-            row = layout.row(align=True)
-            row.alignment = 'EXPAND'
-            row.prop(bj, 'output', text="Path")
-            
-            row = layout.row(align=True)
-            row.alignment = 'EXPAND'
-            row.prop(bj, 'name', text="Name")
-        
-            for pair_i, pair in enumerate(bj.bake_queue):
-                box = layout.box().column(align=True)
-                row = box.row(align=True)
-                row.alignment = 'EXPAND'
-                row.prop_search(pair, "lowpoly", bpy.context.scene, "objects")
+            if bj.expand == False: 
+                row.prop(bj, "expand", icon="TRIA_RIGHT", icon_only=True, text=bj.name, emboss=False)
+                
+                if bj.activated:
+                    row.prop(bj, "activated", icon_only=True, icon = "RESTRICT_RENDER_OFF", emboss = False)
+                else:
+                    row.prop(bj, "activated", icon_only=True, icon = "RESTRICT_RENDER_ON", emboss = False)
                     
-                row = box.row(align=True)
-                row.prop(pair, 'hp_obj_vs_group', expand=True)
-                if pair.hp_obj_vs_group == 'OBJ':
-                    row.prop_search(pair, "highpoly", bpy.context.scene, "objects")
+                rem = row.operator("meltdown.rem_job", text = "", icon = "X")
+                rem.job_index = job_i  
+            else:
+                row.prop(bj, "expand", icon="TRIA_DOWN", icon_only=True, text=bj.name, emboss=False)
+                
+                if bj.activated:
+                    row.prop(bj, "activated", icon_only=True, icon = "RESTRICT_RENDER_OFF", emboss = False)
                 else:
-                    row.prop_search(pair, "highpoly", bpy.data, "groups")
-                row = box.row(align=True)
+                    row.prop(bj, "activated", icon_only=True, icon = "RESTRICT_RENDER_ON", emboss = False)
+
+                rem = row.operator("meltdown.rem_job", text = "", icon = "X")
+                rem.job_index = job_i            
                 
-                row.prop(pair, 'extrusion_vs_cage', expand=True)
-                if pair.extrusion_vs_cage == "EXT":
-                    row.prop(pair, 'extrusion', expand=True)
-                else:
-                    row.prop_search(pair, "cage", bpy.context.scene, "objects")
+                row = layout.row(align=True)
+                row.alignment = 'EXPAND'
+                row.prop(bj, 'resolution_x', text="X")
+                row.prop(bj, 'resolution_y', text="Y")
                 
-                rem = row.operator("meltdown.rem_pair", text = "", icon = "X")
-                rem.pair_index = pair_i
-                rem.job_index = job_i
+                row = layout.row(align=True)
+                row.alignment = 'EXPAND'
+                row.prop(bj, 'margin', text="Margin")
+                
+                row = layout.row(align=True)
+                row.alignment = 'EXPAND'
+                row.prop(bj, 'output', text="Path")
+                
+                row = layout.row(align=True)
+                row.alignment = 'EXPAND'
+                row.prop(bj, 'name', text="Name")
             
-            row = layout.row(align=True)
-            row.alignment = 'EXPAND'
-            addpair = row.operator("meltdown.add_pair", icon = "DISCLOSURE_TRI_RIGHT")
-            addpair.job_index = job_i
-            
-            for pass_i, bakepass in enumerate(bj.bake_pass_queue):
-                box = layout.box().column(align=True)
-                row = box.row(align=True)
-                row.alignment = 'EXPAND'
-                row.label(text=bakepass.get_filepath(bj = bj))
-                
-                rem = row.operator("meltdown.rem_pass", text = "", icon = "X")
-                rem.pass_index = pass_i
-                rem.job_index = job_i
-                
-                row = box.row(align=True)
-                row.alignment = 'EXPAND'
-                row.prop(bakepass, 'pass_name')
-                            
-                row = box.row(align=True)
-                row.alignment = 'EXPAND'
-                row.prop(bakepass, 'suffix')
-                
-                if len(bakepass.props())>0:
-                    row = box.row(align=True)
+                for pair_i, pair in enumerate(bj.bake_queue):
+                    row = layout.row(align=True)
                     row.alignment = 'EXPAND'
-                    row.separator()
-
-                    if "ao_distance" in bakepass.props():
-                        row = box.row(align=True)
-                        row.alignment = 'EXPAND'
-                        row.prop(bakepass, 'ao_distance', text = "AO Distance")
+                    box = row.box().column(align=True)
+                    
+                    subrow = box.row(align=True)
+                    subrow.prop_search(pair, "lowpoly", bpy.context.scene, "objects")
                         
-                    if "nm_space" in bakepass.props():
-                        row = box.row(align=True)
-                        row.alignment = 'EXPAND'
-                        row.prop(bakepass, 'nm_space', text = "type")
-
-                    if "swizzle" in bakepass.props():
-                        row = box.row(align=True)
-                        row.alignment = 'EXPAND'
-                        row.label(text="Swizzle")
-                        row.prop(bakepass, 'normal_r', text = "")
-                        row.prop(bakepass, 'normal_g', text = "")
-                        row.prop(bakepass, 'normal_b', text = "")
+                    subrow = box.row(align=True)
+                    subrow.prop(pair, 'hp_obj_vs_group', expand=True)
+                    if pair.hp_obj_vs_group == 'OBJ':
+                        subrow.prop_search(pair, "highpoly", bpy.context.scene, "objects")
+                    else:
+                        subrow.prop_search(pair, "highpoly", bpy.data, "groups")
+                    subrow = box.row(align=True)
+                    
+                    subrow.prop(pair, 'extrusion_vs_cage', expand=True)
+                    if pair.extrusion_vs_cage == "EXT":
+                        subrow.prop(pair, 'extrusion', expand=True)
+                    else:
+                        subrow.prop_search(pair, "cage", bpy.context.scene, "objects")
+                    
+                    col = row.column()
+                    row = col.row()
+                    rem = row.operator("meltdown.rem_pair", text = "", icon = "X")
+                    rem.pair_index = pair_i
+                    rem.job_index = job_i
+                    
+                    row = col.row()
+                    if pair.activated:
+                        row.prop(pair, "activated", icon_only=True, icon = "RESTRICT_RENDER_OFF", emboss = False)
+                    else:
+                        row.prop(pair, "activated", icon_only=True, icon = "RESTRICT_RENDER_ON", emboss = False)
                         
-                    if "samples" in bakepass.props():
-                        row = box.row(align=True)
-                        row.alignment = 'EXPAND'
-                        row.prop(bakepass, 'samples', text = "Samples")                        
+                row = layout.row(align=True)
+                row.alignment = 'EXPAND'
+                addpair = row.operator("meltdown.add_pair", icon = "DISCLOSURE_TRI_RIGHT")
+                addpair.job_index = job_i
+                
+                for pass_i, bakepass in enumerate(bj.bake_pass_queue):
+                    row = layout.row(align=True)
+                    row.alignment = 'EXPAND'
+                    box = row.box().column(align=True)
+                    
+                    # box = layout.box().column(align=True)
+                    subrow = box.row(align=True)
+                    subrow.alignment = 'EXPAND'
+                    subrow.label(text=bakepass.get_filepath(bj = bj))
+                    
+                    # rem = row.operator("meltdown.rem_pass", text = "", icon = "X")
+                    # rem.pass_index = pass_i
+                    # rem.job_index = job_i
+                    
+                    subrow = box.row(align=True)
+                    subrow.alignment = 'EXPAND'
+                    subrow.prop(bakepass, 'pass_name')
+                                
+                    subrow = box.row(align=True)
+                    subrow.alignment = 'EXPAND'
+                    subrow.prop(bakepass, 'suffix')
+                    
+                    if len(bakepass.props())>0:
+                        subrow = box.row(align=True)
+                        subrow.alignment = 'EXPAND'
+                        subrow.separator()
 
-            row = layout.row(align=True)
-            row.alignment = 'EXPAND'
-            addpass = row.operator("meltdown.add_pass", icon = "DISCLOSURE_TRI_RIGHT")
-            addpass.job_index = job_i
-            
-            row = layout.row(align=True)
-            row.alignment = 'EXPAND'
-            row.separator()
+                        if "ao_distance" in bakepass.props():
+                            subrow = box.row(align=True)
+                            subrow.alignment = 'EXPAND'
+                            subrow.prop(bakepass, 'ao_distance', text = "AO Distance")
+                            
+                        if "nm_space" in bakepass.props():
+                            subrow = box.row(align=True)
+                            subrow.alignment = 'EXPAND'
+                            subrow.prop(bakepass, 'nm_space', text = "type")
+
+                        if "swizzle" in bakepass.props():
+                            subrow = box.row(align=True)
+                            subrow.alignment = 'EXPAND'
+                            subrow.label(text="Swizzle")
+                            subrow.prop(bakepass, 'normal_r', text = "")
+                            subrow.prop(bakepass, 'normal_g', text = "")
+                            subrow.prop(bakepass, 'normal_b', text = "")
+                            
+                        if "samples" in bakepass.props():
+                            subrow = box.row(align=True)
+                            subrow.alignment = 'EXPAND'
+                            subrow.prop(bakepass, 'samples', text = "Samples")    
+                
+                    col = row.column()
+                    row = col.row()
+                    rem = row.operator("meltdown.rem_pass", text = "", icon = "X")
+                    rem.pass_index = pass_i
+                    rem.job_index = job_i
+                    
+                    row = col.row()
+                    if bakepass.activated:
+                        row.prop(bakepass, "activated", icon_only=True, icon = "RESTRICT_RENDER_OFF", emboss = False)
+                    else:
+                        row.prop(bakepass, "activated", icon_only=True, icon = "RESTRICT_RENDER_ON", emboss = False)
+
+                row = layout.row(align=True)
+                row.alignment = 'EXPAND'
+                addpass = row.operator("meltdown.add_pass", icon = "DISCLOSURE_TRI_RIGHT")
+                addpass.job_index = job_i
+                
+                row = layout.row(align=True)
+                row.alignment = 'EXPAND'
+                row.separator()
             
         row = layout.row(align=True)
         row.alignment = 'EXPAND'
