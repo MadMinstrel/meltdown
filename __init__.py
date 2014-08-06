@@ -44,6 +44,7 @@ class BakePair(bpy.types.PropertyGroup):
     extrusion_vs_cage = EnumProperty(name="Extrusion vs Cage", description="", default="EXT", items = [('EXT', '', 'Extrusion', 'OUTLINER_DATA_META', 0), ('CAGE', '', 'Cage', 'OUTLINER_OB_LATTICE', 1)])
     extrusion = bpy.props.FloatProperty(name="Extrusion", description="", default=0.5, min=0.0)
     use_hipoly = bpy.props.BoolProperty(name="Use Hipoly", default = True)
+    no_materials = bpy.props.BoolProperty(name="No Materials", default = False)
 register_class(BakePair)
 
 class BakePass(bpy.types.PropertyGroup):
@@ -188,6 +189,143 @@ class MeltdownBakeOp(bpy.types.Operator):
     bl_idname = "meltdown.bake"
     bl_label = "Meltdown"
     
+    job = bpy.props.IntProperty()
+    bakepass = bpy.props.IntProperty()
+    pair = bpy.props.IntProperty()
+    bake_all = bpy.props.BoolProperty()
+    bake_target = bpy.props.StringProperty()
+    
+    def create_temp_node(self):
+        #add an image node to the lowpoly model's material
+        bake_mat = bpy.context.active_object.active_material
+        
+        if "MDtarget" not in bake_mat.node_tree.nodes:
+            imgnode = bake_mat.node_tree.nodes.new(type = "ShaderNodeTexImage")
+            imgnode.image = bpy.data.images[self.bake_target]
+            imgnode.name = 'MDtarget'
+            imgnode.label = 'MDtarget'
+        else:
+            imgnode = bake_mat.node_tree.nodes['MDtarget']
+            imgnode.image = bpy.data.images[self.bake_target]
+    
+    def cleanup_temp_node(self):
+        bake_mat = bpy.context.active_object.active_material
+        if "MDtarget" in bake_mat.node_tree.nodes:
+            imgnode = bake_mat.node_tree.nodes['MDtarget']
+            bake_mat.node_tree.nodes.remove(imgnode)
+            
+    def prepare_scene(self):
+        mds = bpy.context.scene.meltdown_settings
+        pair = mds.bake_job_queue[self.job].bake_queue[self.pair]
+        
+        # make selections
+        bpy.ops.object.select_all(action='DESELECT')
+        if pair.highpoly != "":
+            if pair.hp_obj_vs_group == "GRP":
+                for object in bpy.data.groups[pair.highpoly].objects:
+                    object.select = True
+            else:
+                bpy.data.scenes[0].objects[pair.highpoly].select = True
+        else:
+            pair.use_hipoly = False
+        
+        bpy.data.scenes[0].objects[pair.lowpoly].select = True
+        bpy.context.scene.objects.active = bpy.data.scenes[0].objects[pair.lowpoly]
+        
+    def create_render_target(self):
+        mds = bpy.context.scene.meltdown_settings
+        bakepass = mds.bake_job_queue[self.job].bake_pass_queue[self.bakepass]
+        job = mds.bake_job_queue[self.job]
+        
+        if "MDtarget" not in bpy.data.images:
+            bpy.ops.image.new(name="MDtarget", width= job.resolution_x, height = job.resolution_y, \
+                                color=(0.0, 0.0, 0.0, 0.0), alpha=True, generated_type='BLANK', float=False)
+        baketarget = bpy.data.images["MDtarget"]
+        self.bake_target = "MDtarget"
+        
+        #assign file path to render target
+        baketarget.filepath = bakepass.get_filepath(job)
+        
+    def cleanup_render_target(self):
+        baketarget = bpy.data.images[self.bake_target]
+        
+        #save image
+        baketarget.save()
+        
+        #unlink from image editors
+        for wm in bpy.data.window_managers:
+            for window in wm.windows:
+                for area in window.screen.areas:
+                    if area.type == "IMAGE_EDITOR":
+                        area.spaces[0].image = None
+        #remove image
+        baketarget.user_clear()
+        bpy.data.images.remove(baketarget)
+    
+    def bake_set(self):
+        mds = bpy.context.scene.meltdown_settings
+        pair = mds.bake_job_queue[self.job].bake_queue[self.pair]
+        bakepass = mds.bake_job_queue[self.job].bake_pass_queue[self.bakepass]
+        bj = mds.bake_job_queue[self.job]
+        
+        self.prepare_scene()
+        
+        no_materials = False
+        #ensure lowpoly has material
+        if len(bpy.data.scenes[0].objects[pair.lowpoly].data.materials) == 0 \
+            or bpy.data.scenes[0].objects[pair.lowpoly].material_slots[0].material == None:
+            no_materials = True
+            temp_mat = bpy.data.materials.new("MeltdownTempMat")
+            temp_mat.use_nodes = True
+            bpy.data.scenes[0].objects[pair.lowpoly].data.materials.append(temp_mat)
+            bpy.data.scenes[0].objects[pair.lowpoly].active_material = temp_mat
+        
+        self.create_temp_node()
+        
+        if pair.extrusion_vs_cage == "CAGE":
+            pair_use_cage = True
+        else:
+            pair_use_cage = False
+        
+        clear = True
+        if self.pair > 0:
+            clear = False
+        
+        #bake
+        bpy.ops.object.bake(type=bpy.context.scene.cycles.bake_type, filepath="", \
+        width=bj.resolution_x, height=bj.resolution_y, margin=bj.margin, \
+        use_selected_to_active=pair.use_hipoly, cage_extrusion=pair.extrusion, cage_object=pair.cage, \
+        normal_space=bakepass.nm_space, \
+        normal_r=bakepass.normal_r, normal_g=bakepass.normal_g, normal_b=bakepass.normal_b, \
+        save_mode='INTERNAL', use_clear=clear, use_cage=pair_use_cage, \
+        use_split_materials=False, use_automatic_name=False)
+    
+        # bake_mat.node_tree.nodes.remove(imgnode)
+        self.cleanup_temp_node()
+        
+        if no_materials:
+            bpy.data.scenes[0].objects[pair.lowpoly].data.materials.clear()
+            bpy.ops.object.material_slot_remove()
+            
+    def bake_pass(self):
+        mds = bpy.context.scene.meltdown_settings
+        bakepass = mds.bake_job_queue[self.job].bake_pass_queue[self.bakepass]
+        bj = mds.bake_job_queue[self.job]
+        
+        self.create_render_target()
+        
+        #copy pass settings to cycles settings
+        bpy.data.scenes[0].cycles.bake_type = bakepass.pass_name
+        bpy.data.scenes[0].cycles.samples = bakepass.samples
+        bpy.data.worlds[0].light_settings.distance = bakepass.ao_distance
+
+        for i_pair, pair in enumerate(bj.bake_queue):
+            self.pair = i_pair
+            self.bake_set()
+            
+        self.cleanup_render_target()
+            
+    
     def execute(self, context):
         mds = context.scene.meltdown_settings
         
@@ -196,102 +334,27 @@ class MeltdownBakeOp(bpy.types.Operator):
         bpy.data.scenes['Scene'].cycles.device = 'CPU'
 
         for i_job, bj in enumerate(mds.bake_job_queue):
+            self.job = i_job
             
             #ensure save path exists
             if not os.path.exists(bpy.path.abspath(bj.output)):
                 os.makedirs(bpy.path.abspath(bj.output))
             
-            for i, bakepass in enumerate(bj.bake_pass_queue):
-                #create render target
-                if "MDtarget" not in bpy.data.images:
-                    bpy.ops.image.new(name="MDtarget", width= bj.resolution_x, height = bj.resolution_y, \
-                                        color=(0.0, 0.0, 0.0, 1.0), alpha=True, generated_type='BLANK', float=False)
-                baketarget = bpy.data.images["MDtarget"]
-                #assign file path to render target
-                baketarget.filepath = bakepass.get_filepath(bj)
+            for i_pass, bakepass in enumerate(bj.bake_pass_queue):
+                self.bakepass = i_pass
+                self.bake_pass()
+                # self.create_render_target()
                 
-                #copy pass settings to cycles settings
-                bpy.data.scenes[0].cycles.bake_type = bakepass.pass_name
-                bpy.data.scenes[0].cycles.samples = bakepass.samples
-                bpy.data.worlds[0].light_settings.distance = bakepass.ao_distance
-                
-                #first pair clears the image
-                clear = True
-                for i, pair in enumerate(bj.bake_queue):
-                    # make selections
-                    bpy.ops.object.select_all(action='DESELECT')
-                    if pair.highpoly != "":
-                        if pair.hp_obj_vs_group == "GRP":
-                            for object in bpy.data.groups[pair.highpoly].objects:
-                                object.select = True
-                        else:
-                            bpy.data.scenes[0].objects[pair.highpoly].select = True
-                    else:
-                        pair.use_hipoly = False
+                # copy pass settings to cycles settings
+                # bpy.data.scenes[0].cycles.bake_type = bakepass.pass_name
+                # bpy.data.scenes[0].cycles.samples = bakepass.samples
+                # bpy.data.worlds[0].light_settings.distance = bakepass.ao_distance
+
+                # for i_pair, pair in enumerate(bj.bake_queue):
+                    # self.pair = i_pair
+                    # self.bake_set()
                     
-                    bpy.data.scenes[0].objects[pair.lowpoly].select = True
-                    bpy.context.scene.objects.active = bpy.data.scenes[0].objects[pair.lowpoly]
-                    
-                    no_materials = False
-                    #ensure lowpoly has material
-                    if len(bpy.data.scenes[0].objects[pair.lowpoly].data.materials) == 0 \
-                        or bpy.data.scenes[0].objects[pair.lowpoly].material_slots[0].material == None:
-                        no_materials = True
-                        temp_mat = bpy.data.materials.new("MeltdownTempMat")
-                        temp_mat.use_nodes = True
-                        bpy.data.scenes[0].objects[pair.lowpoly].data.materials.append(temp_mat)
-                        bpy.data.scenes[0].objects[pair.lowpoly].active_material = temp_mat
-                    
-                    #add an image node to the lowpoly model's material
-                    bake_mat = context.active_object.active_material
-                    
-                    #code.interact(local=locals())
-                    if "target" not in bake_mat.node_tree.nodes:
-                        imgnode = bake_mat.node_tree.nodes.new(type = "ShaderNodeTexImage")
-                        imgnode.image = baketarget
-                        imgnode.name = 'target'
-                        imgnode.label = 'target'
-                    else:
-                        imgnode = bake_mat.node_tree.nodes['target']
-                        imgnode.image = baketarget
-                    
-                    if i>0:
-                        clear = False
-                    
-                    if pair.extrusion_vs_cage == "CAGE":
-                        pair_use_cage = True
-                    else:
-                        pair_use_cage = False
-                    
-                    #bake
-                    bpy.ops.object.bake(type=context.scene.cycles.bake_type, filepath="", \
-                    width=bj.resolution_x, height=bj.resolution_y, margin=bj.margin, \
-                    use_selected_to_active=pair.use_hipoly, cage_extrusion=pair.extrusion, cage_object=pair.cage, \
-                    normal_space=bakepass.nm_space, \
-                    normal_r=bakepass.normal_r, normal_g=bakepass.normal_g, normal_b=bakepass.normal_b, \
-                    save_mode='INTERNAL', use_clear=clear, use_cage=pair_use_cage, \
-                    use_split_materials=False, use_automatic_name=False)
-                
-                    bake_mat.node_tree.nodes.remove(imgnode)
-                    
-                    if no_materials:
-                        bpy.data.scenes[0].objects[pair.lowpoly].data.materials.clear()
-                        #bpy.ops.object.material_slot_select()
-                        bpy.ops.object.material_slot_remove()
-                        
-                    
-                #save resulting image
-                baketarget.save()
-                
-                #unlink from image editors
-                for wm in bpy.data.window_managers:
-                    for window in wm.windows:
-                        for area in window.screen.areas:
-                            if area.type == "IMAGE_EDITOR":
-                                area.spaces[0].image = None
-                #remove image
-                baketarget.user_clear()
-                bpy.data.images.remove(baketarget)
+                # self.cleanup_render_target()
                 
         #restore cycles device after bake
         bpy.data.scenes['Scene'].cycles.device = cycles_device
