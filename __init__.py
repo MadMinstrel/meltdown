@@ -339,10 +339,6 @@ class MeltdownBakeOp(bpy.types.Operator):
     
     def execute(self, context):
         mds = context.scene.meltdown_settings
-        
-        #cycles baking currently crashes on gpu bake
-        cycles_device = bpy.data.scenes['Scene'].cycles.device
-        bpy.data.scenes['Scene'].cycles.device = 'CPU'
 
         for i_job, bj in enumerate(mds.bake_job_queue):
             if bj.activated == True:
@@ -356,9 +352,6 @@ class MeltdownBakeOp(bpy.types.Operator):
                     if bakepass.activated == True:
                         self.bakepass = i_pass
                         self.bake_pass()
-                
-        #restore cycles device after bake
-        bpy.data.scenes['Scene'].cycles.device = cycles_device
         
         return {'FINISHED'}
 
