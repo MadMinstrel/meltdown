@@ -212,6 +212,8 @@ class MeltdownBakeOp(bpy.types.Operator):
         else:
             imgnode = bake_mat.node_tree.nodes['MDtarget']
             imgnode.image = bpy.data.images[self.bake_target]
+        
+        bake_mat.node_tree.nodes.active = imgnode
     
     def cleanup_temp_node(self):
         bake_mat = bpy.context.active_object.active_material
