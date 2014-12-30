@@ -220,24 +220,46 @@ class MeltdownBakeOp(bpy.types.Operator):
         if "MDtarget" in bake_mat.node_tree.nodes:
             imgnode = bake_mat.node_tree.nodes['MDtarget']
             bake_mat.node_tree.nodes.remove(imgnode)
-            
+
+    # def apply_modifiers(self):
+    
+    # def merge_group(self):
+    
     def prepare_scene(self):
         mds = bpy.context.scene.meltdown_settings
         pair = mds.bake_job_queue[self.job].bake_queue[self.pair]
         
+        for object in bpy.context.scene.objects:
+            object.md_orig_name = object.name
+            
+        for group in bpy.data.groups:
+            group.md_orig_name = group.name
+        
+        bpy.ops.scene.new(type='FULL_COPY')
+        bpy.context.scene.name = "MD_TEMP"
+        
+        print(bpy.context.scene.name)
+        
+        for object in bpy.data.scenes["MD_TEMP"].objects:
+            object.name = object.md_orig_name + "_MD_TMP"
+            
+        for group in bpy.data.groups:
+            if group.name != group.md_orig_name:
+                group.name = group.md_orig_name + "_MD_TMP"
+        
         # make selections
         bpy.ops.object.select_all(action='DESELECT')
-        if pair.highpoly != "":
+        if pair.highpoly+"_MD_TMP" != "":
             if pair.hp_obj_vs_group == "GRP":
-                for object in bpy.data.groups[pair.highpoly].objects:
+                for object in bpy.data.groups[pair.highpoly+"_MD_TMP"].objects:
                     object.select = True
             else:
-                bpy.data.scenes[0].objects[pair.highpoly].select = True
+                bpy.data.scenes["MD_TEMP"].objects[pair.highpoly+"_MD_TMP"].select = True
         else:
             pair.use_hipoly = False
         
-        bpy.data.scenes[0].objects[pair.lowpoly].select = True
-        bpy.context.scene.objects.active = bpy.data.scenes[0].objects[pair.lowpoly]
+        bpy.data.scenes["MD_TEMP"].objects[pair.lowpoly+"_MD_TMP"].select = True
+        bpy.context.scene.objects.active = bpy.data.scenes["MD_TEMP"].objects[pair.lowpoly+"_MD_TMP"]
         
     def create_render_target(self):
         mds = bpy.context.scene.meltdown_settings
@@ -279,13 +301,13 @@ class MeltdownBakeOp(bpy.types.Operator):
         
         no_materials = False
         #ensure lowpoly has material
-        if len(bpy.data.scenes[0].objects[pair.lowpoly].data.materials) == 0 \
-            or bpy.data.scenes[0].objects[pair.lowpoly].material_slots[0].material == None:
+        if len(bpy.data.scenes["MD_TEMP"].objects[pair.lowpoly+"_MD_TMP"].data.materials) == 0 \
+            or bpy.data.scenes["MD_TEMP"].objects[pair.lowpoly+"_MD_TMP"].material_slots[0].material == None:
             no_materials = True
             temp_mat = bpy.data.materials.new("MeltdownTempMat")
             temp_mat.use_nodes = True
-            bpy.data.scenes[0].objects[pair.lowpoly].data.materials.append(temp_mat)
-            bpy.data.scenes[0].objects[pair.lowpoly].active_material = temp_mat
+            bpy.data.scenes["MD_TEMP"].objects[pair.lowpoly+"_MD_TMP"].data.materials.append(temp_mat)
+            bpy.data.scenes["MD_TEMP"].objects[pair.lowpoly+"_MD_TMP"].active_material = temp_mat
         
         self.create_temp_node()
         
@@ -312,7 +334,7 @@ class MeltdownBakeOp(bpy.types.Operator):
         self.cleanup_temp_node()
         
         if no_materials:
-            bpy.data.scenes[0].objects[pair.lowpoly].data.materials.clear()
+            bpy.data.scenes[0].objects[pair.lowpoly+"_MD_TMP"].data.materials.clear()
             bpy.ops.object.material_slot_remove()
             
     def bake_pass(self):
@@ -337,16 +359,28 @@ class MeltdownBakeOp(bpy.types.Operator):
                 self.bake_set()
     
         self.cleanup_render_target()
+        
+    def cleanup(self):
+        for object in bpy.data.scenes["MD_TEMP"].objects:
+            if object.type == "MESH":
+                bpy.data.scenes["MD_TEMP"].objects.unlink(object)
+                mesh_to_remove = object.data
+                bpy.data.objects.remove(object)
+                bpy.data.meshes.remove(mesh_to_remove)
+            else:
+                bpy.data.scenes["MD_TEMP"].objects.unlink(object)
+                bpy.data.objects.remove(object)
+        
+        bpy.ops.scene.delete()
             
     
     def execute(self, context):
         mds = context.scene.meltdown_settings
-
         for i_job, bj in enumerate(mds.bake_job_queue):
             if bj.activated == True:
                 self.job = i_job
                 
-                #ensure save path exists
+                # ensure save path exists
                 if not os.path.exists(bpy.path.abspath(bj.output)):
                     os.makedirs(bpy.path.abspath(bj.output))
                 
@@ -355,14 +389,16 @@ class MeltdownBakeOp(bpy.types.Operator):
                         self.bakepass = i_pass
                         self.bake_pass()
         
+        self.cleanup()
+        
         return {'FINISHED'}
 
 class MeltdownPanel(bpy.types.Panel):
     bl_label = "Meltdown bake tools"
     bl_idname = "OBJECT_PT_meltdown"
-    bl_space_type = "PROPERTIES"
-    bl_region_type = "WINDOW"
-    bl_context = "render"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "TOOLS"
+    bl_category = "Meltdown"
 
     def draw(self, context):
         layout = self.layout
@@ -606,6 +642,8 @@ class MeltdownRemJobOp(bpy.types.Operator):
     
 def register():
     bpy.utils.register_module(__name__)
+    bpy.types.Object.md_orig_name = bpy.props.StringProperty(name="Original Name")
+    bpy.types.Group.md_orig_name = bpy.props.StringProperty(name="Original Name")
     
     #bpy.data.scenes[0].bakejob_settings.bake_queue.add()
     
