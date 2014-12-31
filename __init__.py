@@ -87,6 +87,10 @@ class BakePass(bpy.types.PropertyGroup):
     samples = bpy.props.IntProperty(name="Samples", description="", default=1)
     suffix = bpy.props.StringProperty(name="Suffix", description="", default="")
 
+    clean_environment = bpy.props.BoolProperty(name = "Clean Environment", default = True)
+    environment_highpoly = bpy.props.BoolProperty(name = "Highpoly", default = True)
+    environment_group = bpy.props.StringProperty(name="", description="Environment", default="")
+    
     nm_space = bpy.props.EnumProperty(name = "Normal map space", default = "TANGENT",
                                     items = (("TANGENT","Tangent",""),
                                             ("OBJECT", "Object", "")))
@@ -119,7 +123,7 @@ class BakePass(bpy.types.PropertyGroup):
         if self.pass_name == "SHADOW":
             props = {"samples"}
         if self.pass_name == "AO":
-            props = {"ao_distance", "samples"}
+            props = {"ao_distance", "samples", "clean_environment", "environment"}
         if self.pass_name == "NORMAL":
             props = {"nm_space", "swizzle"}
         if self.pass_name == "DIFFUSE_DIRECT":
@@ -265,6 +269,8 @@ class MeltdownBakeOp(bpy.types.Operator):
     def prepare_scene(self):
         mds = bpy.context.scene.meltdown_settings
         pair = mds.bake_job_queue[self.job].bake_queue[self.pair]
+        pair_list = mds.bake_job_queue[self.job].bake_queue
+        bakepass = mds.bake_job_queue[self.job].bake_pass_queue[self.bakepass]
         
         self.scene_copy()
         self.copy_cycles_settings()
@@ -289,10 +295,35 @@ class MeltdownBakeOp(bpy.types.Operator):
         bpy.data.scenes["MD_TEMP"].objects[pair.lowpoly+"_MD_TMP"].layers[0] = True
         bpy.data.scenes["MD_TEMP"].objects[pair.lowpoly+"_MD_TMP"].select = True
         bpy.context.scene.objects.active = bpy.data.scenes["MD_TEMP"].objects[pair.lowpoly+"_MD_TMP"]
-        # remove the rest of the objects
-        for object in bpy.data.scenes["MD_TEMP"].objects:
-            if object.select == False:
-                self.remove_object(object)
+        
+        
+        if bakepass.clean_environment == False and bakepass.environment_highpoly == True:
+            for rem_i, rem_pair in enumerate(pair_list):
+                bpy.data.scenes["MD_TEMP"].objects[rem_pair.highpoly+"_MD_TMP"].select = True
+                bpy.data.scenes["MD_TEMP"].objects[rem_pair.highpoly+"_MD_TMP"].layers[0] = True
+                
+        if bakepass.clean_environment == False \
+        and bakepass.environment_highpoly == False \
+        and bakepass.environment_group != "":
+            print("entered")
+            for object in bpy.data.groups[bakepass.environment_group+"_MD_TMP"].objects:
+                print(object.name)
+                object.select = True
+                object.layers[0] = True
+        
+        # remove unnecessary objects
+        if bakepass.environment_group != "" \
+        or bakepass.clean_environment == True \
+        or bakepass.environment_highpoly == True: #do not remove if environment group empty
+            for object in bpy.data.scenes["MD_TEMP"].objects:
+                if object.select == False:
+                    self.remove_object(object)
+        
+        # for object in bpy.data.scenes["MD_TEMP"].objects:
+            # print(object.name)
+            
+        print("pass")
+        
         
     def create_render_target(self):
         mds = bpy.context.scene.meltdown_settings
@@ -370,7 +401,7 @@ class MeltdownBakeOp(bpy.types.Operator):
             # bpy.data.scenes["MD_TEMP"].objects[pair.lowpoly+"_MD_TMP"].data.materials.clear()
             # bpy.ops.object.material_slot_remove()
         self.cleanup()
-            
+          
     def bake_pass(self):
         mds = bpy.context.scene.meltdown_settings
         bakepass = mds.bake_job_queue[self.job].bake_pass_queue[self.bakepass]
@@ -393,14 +424,15 @@ class MeltdownBakeOp(bpy.types.Operator):
         self.cleanup_render_target()
 
     def remove_object(self, object):
-        if object.type == "MESH":
-            bpy.data.scenes["MD_TEMP"].objects.unlink(object)
-            mesh_to_remove = object.data
-            bpy.data.objects.remove(object)
-            bpy.data.meshes.remove(mesh_to_remove)
-        else:
-            bpy.data.scenes["MD_TEMP"].objects.unlink(object)
-            bpy.data.objects.remove(object)
+        if bpy.data.objects[object.name]:            
+            if object.type == "MESH":
+                bpy.data.scenes["MD_TEMP"].objects.unlink(object)
+                mesh_to_remove = object.data
+                bpy.data.objects.remove(object)
+                bpy.data.meshes.remove(mesh_to_remove)
+            else:
+                bpy.data.scenes["MD_TEMP"].objects.unlink(object)
+                bpy.data.objects.remove(object)
     
     def cleanup(self):
         for object in bpy.data.scenes["MD_TEMP"].objects:
@@ -589,7 +621,22 @@ class MeltdownPanel(bpy.types.Panel):
                             subrow = box.row(align=True)
                             subrow.alignment = 'EXPAND'
                             subrow.prop(bakepass, 'samples', text = "Samples")    
-                
+                        
+                        if "clean_environment" in bakepass.props():
+                            subrow = box.row(align=True)
+                            subrow.alignment = 'EXPAND'
+                            subrow.prop(bakepass, 'clean_environment', text = "Clean Environment")
+                        
+                        if bakepass.clean_environment == False:
+                            subrow = box.row(align=True)
+                            subrow.alignment = 'EXPAND'
+                            subrow.prop(bakepass, 'environment_highpoly', text = "All Highpoly")  
+                        
+                        if bakepass.clean_environment == False and bakepass.environment_highpoly == False:
+                            subrow = box.row(align=True)
+                            subrow.alignment = 'EXPAND'
+                            subrow.prop_search(bakepass, "environment_group", bpy.data, "groups", text = "Environment")
+                            
                     col = row.column()
                     row = col.row()
                     rem = row.operator("meltdown.rem_pass", text = "", icon = "X")
@@ -664,7 +711,7 @@ class MeltdownRemPassOp(bpy.types.Operator):
     job_index = bpy.props.IntProperty()
     def execute(self, context):
         scene_name = bpy.context.scene.name
-        bpy.data.scenes[scene.name].meltdown_settings.bake_job_queue[self.job_index].bake_pass_queue.remove(self.pass_index)
+        bpy.data.scenes[scene_name].meltdown_settings.bake_job_queue[self.job_index].bake_pass_queue.remove(self.pass_index)
         return {'FINISHED'}
 
 class MeltdownAddJobOp(bpy.types.Operator):
