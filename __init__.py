@@ -296,11 +296,16 @@ class MeltdownBakeOp(bpy.types.Operator):
         bpy.data.scenes["MD_TEMP"].objects[pair.lowpoly+"_MD_TMP"].select = True
         bpy.context.scene.objects.active = bpy.data.scenes["MD_TEMP"].objects[pair.lowpoly+"_MD_TMP"]
         
-        
         if bakepass.clean_environment == False and bakepass.environment_highpoly == True:
+            # iterate over objects designated as highpoly and select them
             for rem_i, rem_pair in enumerate(pair_list):
-                bpy.data.scenes["MD_TEMP"].objects[rem_pair.highpoly+"_MD_TMP"].select = True
-                bpy.data.scenes["MD_TEMP"].objects[rem_pair.highpoly+"_MD_TMP"].layers[0] = True
+                if rem_pair.hp_obj_vs_group == "GRP":
+                    for object in  bpy.data.groups[rem_pair.highpoly+"_MD_TMP"].objects:
+                        object.select = True
+                        object.layers[0] = True
+                else:
+                    bpy.data.scenes["MD_TEMP"].objects[rem_pair.highpoly+"_MD_TMP"].select = True
+                    bpy.data.scenes["MD_TEMP"].objects[rem_pair.highpoly+"_MD_TMP"].layers[0] = True
                 
         if bakepass.clean_environment == False \
         and bakepass.environment_highpoly == False \
@@ -318,12 +323,6 @@ class MeltdownBakeOp(bpy.types.Operator):
             for object in bpy.data.scenes["MD_TEMP"].objects:
                 if object.select == False:
                     self.remove_object(object)
-        
-        # for object in bpy.data.scenes["MD_TEMP"].objects:
-            # print(object.name)
-            
-        print("pass")
-        
         
     def create_render_target(self):
         mds = bpy.context.scene.meltdown_settings
@@ -441,8 +440,6 @@ class MeltdownBakeOp(bpy.types.Operator):
         for material in bpy.data.materials:
             if material.name.endswith("_MD_TMP"):
                 bpy.data.materials.remove(material)
-            # if material.name == "Meltdown_MD_TMP":
-                # bpy.data.materials.remove(material)
         
         for group in bpy.data.groups:
             if group.name.endswith("_MD_TMP"):
