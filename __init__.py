@@ -225,41 +225,74 @@ class MeltdownBakeOp(bpy.types.Operator):
     
     # def merge_group(self):
     
+    def scene_copy(self):
+        # store the original names of things in the scene so we can easily identify them later
+        for object in bpy.context.scene.objects:
+            object.md_orig_name = object.name
+        for group in bpy.data.groups:
+            group.md_orig_name = group.name
+        for world in bpy.data.worlds:
+            world.md_orig_name = world.name
+        for material in bpy.data.materials:
+            material.md_orig_name = material.name
+        
+        # duplicate the scene
+        bpy.ops.scene.new(type='FULL_COPY')
+        bpy.context.scene.name = "MD_TEMP"
+        
+        # tag the copied object names with _MD_TMP
+        for object in bpy.data.scenes["MD_TEMP"].objects:
+            object.name = object.md_orig_name + "_MD_TMP"
+        for group in bpy.data.groups:
+            if group.name != group.md_orig_name:
+                group.name = group.md_orig_name + "_MD_TMP"
+        for world in bpy.data.worlds:
+            if world.name != world.md_orig_name:
+                world.name = "MD_TEMP"
+        for material in bpy.data.materials:
+            if material.name != material.md_orig_name:
+                material.name = material.md_orig_name + "_MD_TMP"
+        
+    def copy_cycles_settings(self):
+        mds = bpy.context.scene.meltdown_settings
+        bakepass = mds.bake_job_queue[self.job].bake_pass_queue[self.bakepass]
+        
+        #copy pass settings to cycles settings
+        bpy.data.scenes["MD_TEMP"].cycles.bake_type = bakepass.pass_name
+        bpy.data.scenes["MD_TEMP"].cycles.samples = bakepass.samples
+        bpy.data.worlds["MD_TEMP"].light_settings.distance = bakepass.ao_distance
+    
     def prepare_scene(self):
         mds = bpy.context.scene.meltdown_settings
         pair = mds.bake_job_queue[self.job].bake_queue[self.pair]
         
-        for object in bpy.context.scene.objects:
-            object.md_orig_name = object.name
-            
-        for group in bpy.data.groups:
-            group.md_orig_name = group.name
+        self.scene_copy()
+        self.copy_cycles_settings()
         
-        bpy.ops.scene.new(type='FULL_COPY')
-        bpy.context.scene.name = "MD_TEMP"
-        
-        print(bpy.context.scene.name)
-        
-        for object in bpy.data.scenes["MD_TEMP"].objects:
-            object.name = object.md_orig_name + "_MD_TMP"
-            
-        for group in bpy.data.groups:
-            if group.name != group.md_orig_name:
-                group.name = group.md_orig_name + "_MD_TMP"
+        # bpy.data.scenes["MD_TEMP"].active_layer = 0
+        bpy.data.scenes["MD_TEMP"].layers[0] = True
         
         # make selections
         bpy.ops.object.select_all(action='DESELECT')
         if pair.highpoly+"_MD_TMP" != "":
             if pair.hp_obj_vs_group == "GRP":
                 for object in bpy.data.groups[pair.highpoly+"_MD_TMP"].objects:
+                    object.layers[0] = True
                     object.select = True
             else:
+                bpy.data.scenes["MD_TEMP"].objects[pair.highpoly+"_MD_TMP"].layers[0] = True
                 bpy.data.scenes["MD_TEMP"].objects[pair.highpoly+"_MD_TMP"].select = True
+
         else:
             pair.use_hipoly = False
         
+        bpy.data.scenes["MD_TEMP"].objects[pair.lowpoly+"_MD_TMP"].layers[0] = True
         bpy.data.scenes["MD_TEMP"].objects[pair.lowpoly+"_MD_TMP"].select = True
         bpy.context.scene.objects.active = bpy.data.scenes["MD_TEMP"].objects[pair.lowpoly+"_MD_TMP"]
+        # remove the rest of the objects
+        for object in bpy.data.scenes["MD_TEMP"].objects:
+            if object.select == False:
+                self.remove_object(object)
         
     def create_render_target(self):
         mds = bpy.context.scene.meltdown_settings
@@ -304,7 +337,7 @@ class MeltdownBakeOp(bpy.types.Operator):
         if len(bpy.data.scenes["MD_TEMP"].objects[pair.lowpoly+"_MD_TMP"].data.materials) == 0 \
             or bpy.data.scenes["MD_TEMP"].objects[pair.lowpoly+"_MD_TMP"].material_slots[0].material == None:
             no_materials = True
-            temp_mat = bpy.data.materials.new("MeltdownTempMat")
+            temp_mat = bpy.data.materials.new("Meltdown_MD_TMP")
             temp_mat.use_nodes = True
             bpy.data.scenes["MD_TEMP"].objects[pair.lowpoly+"_MD_TMP"].data.materials.append(temp_mat)
             bpy.data.scenes["MD_TEMP"].objects[pair.lowpoly+"_MD_TMP"].active_material = temp_mat
@@ -333,9 +366,10 @@ class MeltdownBakeOp(bpy.types.Operator):
         # bake_mat.node_tree.nodes.remove(imgnode)
         self.cleanup_temp_node()
         
-        if no_materials:
-            bpy.data.scenes[0].objects[pair.lowpoly+"_MD_TMP"].data.materials.clear()
-            bpy.ops.object.material_slot_remove()
+        # if no_materials:
+            # bpy.data.scenes["MD_TEMP"].objects[pair.lowpoly+"_MD_TMP"].data.materials.clear()
+            # bpy.ops.object.material_slot_remove()
+        self.cleanup()
             
     def bake_pass(self):
         mds = bpy.context.scene.meltdown_settings
@@ -343,11 +377,9 @@ class MeltdownBakeOp(bpy.types.Operator):
         bj = mds.bake_job_queue[self.job]
         
         self.create_render_target()
-        
-        #copy pass settings to cycles settings
-        bpy.data.scenes[0].cycles.bake_type = bakepass.pass_name
-        bpy.data.scenes[0].cycles.samples = bakepass.samples
-        bpy.data.worlds[0].light_settings.distance = bakepass.ao_distance
+        # self.scene_copy()
+        # self.copy_cycles_settings()
+
         
         #the pair counter is used to determine whether to clear the image
         #set it to 0 after each bake pass
@@ -359,21 +391,33 @@ class MeltdownBakeOp(bpy.types.Operator):
                 self.bake_set()
     
         self.cleanup_render_target()
-        
+
+    def remove_object(self, object):
+        if object.type == "MESH":
+            bpy.data.scenes["MD_TEMP"].objects.unlink(object)
+            mesh_to_remove = object.data
+            bpy.data.objects.remove(object)
+            bpy.data.meshes.remove(mesh_to_remove)
+        else:
+            bpy.data.scenes["MD_TEMP"].objects.unlink(object)
+            bpy.data.objects.remove(object)
+    
     def cleanup(self):
         for object in bpy.data.scenes["MD_TEMP"].objects:
-            if object.type == "MESH":
-                bpy.data.scenes["MD_TEMP"].objects.unlink(object)
-                mesh_to_remove = object.data
-                bpy.data.objects.remove(object)
-                bpy.data.meshes.remove(mesh_to_remove)
-            else:
-                bpy.data.scenes["MD_TEMP"].objects.unlink(object)
-                bpy.data.objects.remove(object)
+            self.remove_object(object)
+        
+        for material in bpy.data.materials:
+            if material.name.endswith("_MD_TMP"):
+                bpy.data.materials.remove(material)
+            # if material.name == "Meltdown_MD_TMP":
+                # bpy.data.materials.remove(material)
+        
+        for group in bpy.data.groups:
+            if group.name.endswith("_MD_TMP"):
+                bpy.data.groups.remove(group)
         
         bpy.ops.scene.delete()
             
-    
     def execute(self, context):
         mds = context.scene.meltdown_settings
         for i_job, bj in enumerate(mds.bake_job_queue):
@@ -389,7 +433,7 @@ class MeltdownBakeOp(bpy.types.Operator):
                         self.bakepass = i_pass
                         self.bake_pass()
         
-        self.cleanup()
+
         
         return {'FINISHED'}
 
@@ -579,7 +623,8 @@ class MeltdownAddPairOp(bpy.types.Operator):
     
     job_index = bpy.props.IntProperty()
     def execute(self, context):
-        bpy.data.scenes[0].meltdown_settings.bake_job_queue[self.job_index].bake_queue.add()
+        scene_name = bpy.context.scene.name
+        bpy.data.scenes[scene_name].meltdown_settings.bake_job_queue[self.job_index].bake_queue.add()
         
         return {'FINISHED'}
 
@@ -592,7 +637,8 @@ class MeltdownRemPairOp(bpy.types.Operator):
     pair_index = bpy.props.IntProperty()
     job_index = bpy.props.IntProperty()
     def execute(self, context):
-        bpy.data.scenes[0].meltdown_settings.bake_job_queue[self.job_index].bake_queue.remove(self.pair_index)
+        scene_name = bpy.context.scene.name
+        bpy.data.scenes[scene_name].meltdown_settings.bake_job_queue[self.job_index].bake_queue.remove(self.pair_index)
         
         return {'FINISHED'}
         
@@ -604,7 +650,8 @@ class MeltdownAddPassOp(bpy.types.Operator):
     
     job_index = bpy.props.IntProperty()
     def execute(self, context):
-        bpy.data.scenes[0].meltdown_settings.bake_job_queue[self.job_index].bake_pass_queue.add()
+        scene_name = bpy.context.scene.name
+        bpy.data.scenes[scene_name].meltdown_settings.bake_job_queue[self.job_index].bake_pass_queue.add()
         return {'FINISHED'}
 
 class MeltdownRemPassOp(bpy.types.Operator):
@@ -616,7 +663,8 @@ class MeltdownRemPassOp(bpy.types.Operator):
     pass_index = bpy.props.IntProperty()
     job_index = bpy.props.IntProperty()
     def execute(self, context):
-        bpy.data.scenes[0].meltdown_settings.bake_job_queue[self.job_index].bake_pass_queue.remove(self.pass_index)
+        scene_name = bpy.context.scene.name
+        bpy.data.scenes[scene.name].meltdown_settings.bake_job_queue[self.job_index].bake_pass_queue.remove(self.pass_index)
         return {'FINISHED'}
 
 class MeltdownAddJobOp(bpy.types.Operator):
@@ -626,7 +674,8 @@ class MeltdownAddJobOp(bpy.types.Operator):
     bl_label = "Add Bake Job"
     
     def execute(self, context):
-        bpy.data.scenes[0].meltdown_settings.bake_job_queue.add()
+        scene_name = bpy.context.scene.name
+        bpy.data.scenes[scene_name].meltdown_settings.bake_job_queue.add()
         return {'FINISHED'}
 
 class MeltdownRemJobOp(bpy.types.Operator):
@@ -637,13 +686,17 @@ class MeltdownRemJobOp(bpy.types.Operator):
     
     job_index = bpy.props.IntProperty()
     def execute(self, context):
-        bpy.data.scenes[0].meltdown_settings.bake_job_queue.remove(self.job_index)
+        scene_name = bpy.context.scene.name
+        bpy.data.scenes[scene_name].meltdown_settings.bake_job_queue.remove(self.job_index)
         return {'FINISHED'}
     
 def register():
     bpy.utils.register_module(__name__)
     bpy.types.Object.md_orig_name = bpy.props.StringProperty(name="Original Name")
     bpy.types.Group.md_orig_name = bpy.props.StringProperty(name="Original Name")
+    bpy.types.World.md_orig_name = bpy.props.StringProperty(name="Original Name")
+    bpy.types.Material.md_orig_name = bpy.props.StringProperty(name="Original Name")
+    
     
     #bpy.data.scenes[0].bakejob_settings.bake_queue.add()
     
