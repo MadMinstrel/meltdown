@@ -169,7 +169,8 @@ class BakeJob(bpy.types.PropertyGroup):
     expand = bpy.props.BoolProperty(name = "Expand", default = True)
     resolution_x = bpy.props.IntProperty(name="Resolution X", default = 1024)
     resolution_y = bpy.props.IntProperty(name="Resolution Y", default = 1024)
-    # antialiasing = bpy.props.IntProperty(name="Antialias Samples", description="", default=1, min=1, max=4)
+    antialiasing = bpy.props.BoolProperty(name="4x Antialiasing", description="", default=False)
+    aa_sharpness = bpy.props.FloatProperty(name="AA Sharpness", description="", default=0.5, min = 0.0, max = 1.0)
     
     margin = bpy.props.IntProperty(name="Margin", default = 16, min = 0)
     
@@ -183,6 +184,12 @@ class BakeJob(bpy.types.PropertyGroup):
     
     bake_queue = bpy.props.CollectionProperty(type=BakePair)
     bake_pass_queue = bpy.props.CollectionProperty(type=BakePass)
+    
+    def get_render_resolution(self):
+        if self.antialiasing == True:
+            return [self.resolution_x * 2, self.resolution_y * 2]
+        else:
+            return [self.resolution_x, self.resolution_y]
     
 register_class(BakeJob)
 
@@ -333,7 +340,8 @@ class MeltdownBakeOp(bpy.types.Operator):
         mds = bpy.context.scene.meltdown_settings
         job = mds.bake_job_queue[self.job]
 
-        bpy.ops.image.new(name="MDtarget", width= job.resolution_x, height = job.resolution_y, \
+        bpy.ops.image.new(name="MDtarget", width= job.get_render_resolution()[0], \
+        height = job.get_render_resolution()[1], \
         color=(0.0, 0.0, 0.0, 0.0), alpha=True, generated_type='BLANK', float=False)
         
     def cleanup_render_target(self):
@@ -381,7 +389,7 @@ class MeltdownBakeOp(bpy.types.Operator):
         
         #bake
         bpy.ops.object.bake(type=bpy.context.scene.cycles.bake_type, filepath="", \
-        width=bj.resolution_x, height=bj.resolution_y, margin=2, \
+        width=bj.get_render_resolution()[0], height=bj.get_render_resolution()[1], margin=2, \
         use_selected_to_active=pair.use_hipoly, cage_extrusion=pair.extrusion, cage_object=pair.cage, \
         normal_space=bakepass.nm_space, \
         normal_r=bakepass.normal_r, normal_g=bakepass.normal_g, normal_b=bakepass.normal_b, \
@@ -435,7 +443,7 @@ class MeltdownBakeOp(bpy.types.Operator):
                 bpy.data.groups.remove(group)
         
         bpy.ops.scene.delete()
-
+    
     def compo_nodes_margin(self, targetimage):
         mds = bpy.context.scene.meltdown_settings
         bj = mds.bake_job_queue[self.job]
@@ -449,6 +457,7 @@ class MeltdownBakeOp(bpy.types.Operator):
         bpy.data.scenes["MD_COMPO"].render.resolution_y = bj.resolution_y
         bpy.data.scenes["MD_COMPO"].render.resolution_percentage = 100
         bpy.data.scenes["MD_COMPO"].render.filepath = bakepass.get_filepath(bj)
+        bpy.data.scenes["MD_COMPO"].render.image_settings.compression = 0
         
         tree = bpy.data.scenes["MD_COMPO"].node_tree
         
@@ -459,9 +468,18 @@ class MeltdownBakeOp(bpy.types.Operator):
         # make a dictionary of all the nodes we're going to need
         # the vector is for placement only, otherwise useless
         nodes = {
-            "Output": ["CompositorNodeComposite", (200.0, 100.0)],
-            "Inpaint": ["CompositorNodeInpaint", (0.0, 100.0)],
-            "Image": ["CompositorNodeImage", (-200.0, 100.0)]
+            "Image": ["CompositorNodeImage", (-900.0, 100.0)],
+            "Inpaint": ["CompositorNodeInpaint", (-700.0, 100.0)],
+            "Filter": ["CompositorNodeValue", (-700.0, -100.0)],
+            "Negative": ["CompositorNodeMath", (-700.0, -300.0)],
+            "TF1": ["CompositorNodeTransform", (-500.0, 100.0)],
+            "TF2": ["CompositorNodeTransform", (-500.0, -100.0)],
+            "TF3": ["CompositorNodeTransform", (-500.0, -300.0)],
+            "TF4": ["CompositorNodeTransform", (-500.0, -500.0)],
+            "Mix1": ["CompositorNodeMixRGB", (-300.0, 100.0)],
+            "Mix2": ["CompositorNodeMixRGB", (-300.0, -300.0)],
+            "Mix3": ["CompositorNodeMixRGB", (-100.0, 100.0)],
+            "Output": ["CompositorNodeComposite", (200.0, 100.0)]
         }
         
         # add all the listed nodes
@@ -473,16 +491,62 @@ class MeltdownBakeOp(bpy.types.Operator):
             
         links = [
             ["Image", "Image", "Inpaint", "Image"],
-            ["Inpaint", "Image", "Output", "Image"]
+            ["Filter", "Value", "Negative", 1],
+            ["Inpaint", "Image", "TF1", "Image"],
+            ["Inpaint", "Image", "TF2", "Image"],
+            ["Inpaint", "Image", "TF3", "Image"],
+            ["Inpaint", "Image", "TF4", "Image"],
+            ["Filter", "Value", "TF1", 2],
+            ["Filter", "Value", "TF2", 1],
+            ["Filter", "Value", "TF2", 2],
+            ["Filter", "Value", "TF4", 1],
+            ["Negative", "Value", "TF1", 1],
+            ["Negative", "Value", "TF3", 1],
+            ["Negative", "Value", "TF3", 2],
+            ["Negative", "Value", "TF4", 2],
+            ["TF1", "Image", "Mix1", 1],
+            ["TF2", "Image", "Mix1", 2],
+            ["TF3", "Image", "Mix2", 1],
+            ["TF4", "Image", "Mix2", 2],
+            ["Mix1", "Image", "Mix3", 1],
+            ["Mix2", "Image", "Mix3", 2],
+            ["Mix3", "Image", "Output", "Image"]
         ]
         
         for link in links:
             output = tree.nodes[link[0]].outputs[link[1]]
             input = tree.nodes[link[2]].inputs[link[3]]
             tree.links.new(output, input)
-            
+
+        if bj.antialiasing == True:
+            margin = bj.margin*2
+            filter_width = (1.0-bj.aa_sharpness)/2.0
+            print("filter "+str(filter_width))
+            transform_scale = 0.5
+        else:
+            margin = bj.margin
+            filter_width = 0.0            
+            transform_scale = 1.0
+        
         tree.nodes["Image"].image = targetimage
-        tree.nodes["Inpaint"].distance = bj.margin
+        tree.nodes["Inpaint"].distance = margin
+        tree.nodes["Filter"].outputs[0].default_value = filter_width
+        tree.nodes["Negative"].inputs[0].default_value = 0.0
+        tree.nodes["Negative"].operation = "SUBTRACT"
+        tree.nodes["TF1"].inputs[4].default_value = transform_scale
+        tree.nodes["TF2"].inputs[4].default_value = transform_scale
+        tree.nodes["TF3"].inputs[4].default_value = transform_scale
+        tree.nodes["TF4"].inputs[4].default_value = transform_scale
+        tree.nodes["TF1"].filter_type = "BICUBIC"
+        tree.nodes["TF2"].filter_type = "BICUBIC"
+        tree.nodes["TF3"].filter_type = "BICUBIC"
+        tree.nodes["TF4"].filter_type = "BICUBIC"
+        tree.nodes["Mix1"].inputs[0].default_value = 0.5
+        tree.nodes["Mix2"].inputs[0].default_value = 0.5
+        tree.nodes["Mix3"].inputs[0].default_value = 0.5
+        
+
+        
         
         bpy.ops.render.render(write_still = True, scene = "MD_COMPO")
         bpy.ops.scene.delete()
@@ -559,6 +623,15 @@ class MeltdownPanel(bpy.types.Panel):
                 row.alignment = 'EXPAND'
                 row.prop(bj, 'resolution_x', text="X")
                 row.prop(bj, 'resolution_y', text="Y")
+                
+                row = layout.row(align=True)
+                row.alignment = 'EXPAND'
+                row.prop(bj, 'antialiasing', text="4x Antialiasing")
+                
+                if bj.antialiasing == True:
+                    row = layout.row(align=True)
+                    row.alignment = 'EXPAND'
+                    row.prop(bj, 'aa_sharpness', text="AA sharpness")
                 
                 row = layout.row(align=True)
                 row.alignment = 'EXPAND'
