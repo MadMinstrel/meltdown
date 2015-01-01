@@ -169,6 +169,7 @@ class BakeJob(bpy.types.PropertyGroup):
     expand = bpy.props.BoolProperty(name = "Expand", default = True)
     resolution_x = bpy.props.IntProperty(name="Resolution X", default = 1024)
     resolution_y = bpy.props.IntProperty(name="Resolution Y", default = 1024)
+    # antialiasing = bpy.props.IntProperty(name="Antialias Samples", description="", default=1, min=1, max=4)
     
     margin = bpy.props.IntProperty(name="Margin", default = 16, min = 0)
     
@@ -210,12 +211,12 @@ class MeltdownBakeOp(bpy.types.Operator):
         
         if "MDtarget" not in bake_mat.node_tree.nodes:
             imgnode = bake_mat.node_tree.nodes.new(type = "ShaderNodeTexImage")
-            imgnode.image = bpy.data.images[self.bake_target]
+            imgnode.image = bpy.data.images["MDtarget"]
             imgnode.name = 'MDtarget'
             imgnode.label = 'MDtarget'
         else:
             imgnode = bake_mat.node_tree.nodes['MDtarget']
-            imgnode.image = bpy.data.images[self.bake_target]
+            imgnode.image = bpy.data.images["MDtarget"]
         
         bake_mat.node_tree.nodes.active = imgnode
     
@@ -256,7 +257,11 @@ class MeltdownBakeOp(bpy.types.Operator):
         for material in bpy.data.materials:
             if material.name != material.md_orig_name:
                 material.name = material.md_orig_name + "_MD_TMP"
-        
+    
+    def scene_new_compo(self):
+        bpy.ops.scene.new(type = "EMPTY")
+        bpy.context.scene.name = "MD_COMPO"
+    
     def copy_cycles_settings(self):
         mds = bpy.context.scene.meltdown_settings
         bakepass = mds.bake_job_queue[self.job].bake_pass_queue[self.bakepass]
@@ -326,23 +331,16 @@ class MeltdownBakeOp(bpy.types.Operator):
         
     def create_render_target(self):
         mds = bpy.context.scene.meltdown_settings
-        bakepass = mds.bake_job_queue[self.job].bake_pass_queue[self.bakepass]
         job = mds.bake_job_queue[self.job]
-        
-        if "MDtarget" not in bpy.data.images:
-            bpy.ops.image.new(name="MDtarget", width= job.resolution_x, height = job.resolution_y, \
-                                color=(0.0, 0.0, 0.0, 0.0), alpha=True, generated_type='BLANK', float=False)
-        baketarget = bpy.data.images["MDtarget"]
-        self.bake_target = "MDtarget"
-        
-        #assign file path to render target
-        baketarget.filepath = bakepass.get_filepath(job)
+
+        bpy.ops.image.new(name="MDtarget", width= job.resolution_x, height = job.resolution_y, \
+        color=(0.0, 0.0, 0.0, 0.0), alpha=True, generated_type='BLANK', float=False)
         
     def cleanup_render_target(self):
-        baketarget = bpy.data.images[self.bake_target]
+        baketarget = bpy.data.images["MDtarget"]
         
-        #save image
-        baketarget.save()
+        # call compo trees here
+        self.compo_nodes_margin(baketarget)
         
         #unlink from image editors
         for wm in bpy.data.window_managers:
@@ -350,9 +348,6 @@ class MeltdownBakeOp(bpy.types.Operator):
                 for area in window.screen.areas:
                     if area.type == "IMAGE_EDITOR":
                         area.spaces[0].image = None
-        #remove image
-        baketarget.user_clear()
-        bpy.data.images.remove(baketarget)
     
     def bake_set(self):
         mds = bpy.context.scene.meltdown_settings
@@ -386,14 +381,13 @@ class MeltdownBakeOp(bpy.types.Operator):
         
         #bake
         bpy.ops.object.bake(type=bpy.context.scene.cycles.bake_type, filepath="", \
-        width=bj.resolution_x, height=bj.resolution_y, margin=bj.margin, \
+        width=bj.resolution_x, height=bj.resolution_y, margin=2, \
         use_selected_to_active=pair.use_hipoly, cage_extrusion=pair.extrusion, cage_object=pair.cage, \
         normal_space=bakepass.nm_space, \
         normal_r=bakepass.normal_r, normal_g=bakepass.normal_g, normal_b=bakepass.normal_b, \
         save_mode='INTERNAL', use_clear=clear, use_cage=pair_use_cage, \
         use_split_materials=False, use_automatic_name=False)
     
-        # bake_mat.node_tree.nodes.remove(imgnode)
         self.cleanup_temp_node()
         
         # if no_materials:
@@ -405,12 +399,7 @@ class MeltdownBakeOp(bpy.types.Operator):
         mds = bpy.context.scene.meltdown_settings
         bakepass = mds.bake_job_queue[self.job].bake_pass_queue[self.bakepass]
         bj = mds.bake_job_queue[self.job]
-        
-        self.create_render_target()
-        # self.scene_copy()
-        # self.copy_cycles_settings()
 
-        
         #the pair counter is used to determine whether to clear the image
         #set it to 0 after each bake pass
         bakepass.pair_counter = 0
@@ -446,9 +435,61 @@ class MeltdownBakeOp(bpy.types.Operator):
                 bpy.data.groups.remove(group)
         
         bpy.ops.scene.delete()
+
+    def compo_nodes_margin(self, targetimage):
+        mds = bpy.context.scene.meltdown_settings
+        bj = mds.bake_job_queue[self.job]
+        bakepass = mds.bake_job_queue[self.job].bake_pass_queue[self.bakepass]
+        # job = mds.bake_job_queue[self.job]
+        self.scene_new_compo()
+        
+        # make sure the compositor is using nodes
+        bpy.data.scenes["MD_COMPO"].use_nodes = True
+        bpy.data.scenes["MD_COMPO"].render.resolution_x = bj.resolution_x
+        bpy.data.scenes["MD_COMPO"].render.resolution_y = bj.resolution_y
+        bpy.data.scenes["MD_COMPO"].render.resolution_percentage = 100
+        bpy.data.scenes["MD_COMPO"].render.filepath = bakepass.get_filepath(bj)
+        
+        tree = bpy.data.scenes["MD_COMPO"].node_tree
+        
+        # get rid of all nodes
+        for node in tree.nodes:
+            tree.nodes.remove(node)
+        
+        # make a dictionary of all the nodes we're going to need
+        # the vector is for placement only, otherwise useless
+        nodes = {
+            "Output": ["CompositorNodeComposite", (200.0, 100.0)],
+            "Inpaint": ["CompositorNodeInpaint", (0.0, 100.0)],
+            "Image": ["CompositorNodeImage", (-200.0, 100.0)]
+        }
+        
+        # add all the listed nodes
+        for key, node_data in nodes.items():
+            node = tree.nodes.new(type = node_data[0])
+            node.location = node_data[1]
+            node.name = key
+            node.label = key
             
+        links = [
+            ["Image", "Image", "Inpaint", "Image"],
+            ["Inpaint", "Image", "Output", "Image"]
+        ]
+        
+        for link in links:
+            output = tree.nodes[link[0]].outputs[link[1]]
+            input = tree.nodes[link[2]].inputs[link[3]]
+            tree.links.new(output, input)
+            
+        tree.nodes["Image"].image = targetimage
+        tree.nodes["Inpaint"].distance = bj.margin
+        
+        bpy.ops.render.render(write_still = True, scene = "MD_COMPO")
+        bpy.ops.scene.delete()
+    
     def execute(self, context):
         mds = context.scene.meltdown_settings
+        self.create_render_target()
         for i_job, bj in enumerate(mds.bake_job_queue):
             if bj.activated == True:
                 self.job = i_job
@@ -462,7 +503,8 @@ class MeltdownBakeOp(bpy.types.Operator):
                         self.bakepass = i_pass
                         self.bake_pass()
         
-
+        bpy.data.images["MDtarget"].user_clear()
+        bpy.data.images.remove(bpy.data.images["MDtarget"])
         
         return {'FINISHED'}
 
