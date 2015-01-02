@@ -55,7 +55,7 @@ class BakePass(bpy.types.PropertyGroup):
                                     items = (("COMBINED","Combined",""),
                                             #("Z","Depth",""),
                                             #("COLOR","Color",""),
-                                            #("DIFFUSE","Diffuse",""),
+                                            # ("DIFFUSE","Diffuse",""),
                                             #("SPECULAR","Specular",""),
                                             ("SHADOW","Shadow",""),
                                             ("AO","Ambient Occlusion",""),
@@ -87,8 +87,8 @@ class BakePass(bpy.types.PropertyGroup):
     samples = bpy.props.IntProperty(name="Samples", description="", default=1)
     suffix = bpy.props.StringProperty(name="Suffix", description="", default="")
 
-    clean_environment = bpy.props.BoolProperty(name = "Clean Environment", default = True)
-    environment_highpoly = bpy.props.BoolProperty(name = "Highpoly", default = True)
+    clean_environment = bpy.props.BoolProperty(name = "Clean Environment", default = False)
+    environment_highpoly = bpy.props.BoolProperty(name = "Highpoly", default = False)
     environment_group = bpy.props.StringProperty(name="", description="Environment", default="")
     
     nm_space = bpy.props.EnumProperty(name = "Normal map space", default = "TANGENT",
@@ -119,21 +119,23 @@ class BakePass(bpy.types.PropertyGroup):
     def props(self):
         props = set()
         if self.pass_name == "COMBINED":
-            props = {"samples"}
+            props = {"samples", "clean_environment", "environment"}
         if self.pass_name == "SHADOW":
             props = {"samples"}
         if self.pass_name == "AO":
             props = {"ao_distance", "samples", "clean_environment", "environment"}
         if self.pass_name == "NORMAL":
             props = {"nm_space", "swizzle"}
+        # if self.pass_name == "DIFFUSE":
+            # props = {"samples", "clean_environment", "environment"}
         if self.pass_name == "DIFFUSE_DIRECT":
-            props = {"samples"}
+            props = {"samples", "clean_environment", "environment"}
         if self.pass_name == "DIFFUSE_INDIRECT":
-            props = {"samples"}
+            props = {"samples", "clean_environment", "environment"}
         if self.pass_name == "GLOSSY_DIRECT":
-            props = {"samples"}
+            props = {"samples", "clean_environment", "environment"}
         if self.pass_name == "GLOSSY_INDIRECT":
-            props = {"samples"}
+            props = {"samples", "clean_environment", "environment"}
         if self.pass_name == "TRANSMISSION_DIRECT":
             props = {"samples"}
         if self.pass_name == "TRANSMISSION_INDIRECT":
@@ -216,6 +218,7 @@ class MeltdownBakeOp(bpy.types.Operator):
         #add an image node to the lowpoly model's material
         bake_mat = bpy.context.active_object.active_material
         
+        bake_mat.use_nodes = True
         if "MDtarget" not in bake_mat.node_tree.nodes:
             imgnode = bake_mat.node_tree.nodes.new(type = "ShaderNodeTexImage")
             imgnode.image = bpy.data.images["MDtarget"]
@@ -292,7 +295,7 @@ class MeltdownBakeOp(bpy.types.Operator):
         
         # make selections
         bpy.ops.object.select_all(action='DESELECT')
-        if pair.highpoly+"_MD_TMP" != "":
+        if pair.highpoly != "":
             if pair.hp_obj_vs_group == "GRP":
                 for object in bpy.data.groups[pair.highpoly+"_MD_TMP"].objects:
                     object.layers[0] = True
@@ -389,7 +392,7 @@ class MeltdownBakeOp(bpy.types.Operator):
         
         #bake
         bpy.ops.object.bake(type=bpy.context.scene.cycles.bake_type, filepath="", \
-        width=bj.get_render_resolution()[0], height=bj.get_render_resolution()[1], margin=2, \
+        width=bj.get_render_resolution()[0], height=bj.get_render_resolution()[1], margin=0, \
         use_selected_to_active=pair.use_hipoly, cage_extrusion=pair.extrusion, cage_object=pair.cage, \
         normal_space=bakepass.nm_space, \
         normal_r=bakepass.normal_r, normal_g=bakepass.normal_g, normal_b=bakepass.normal_b, \
@@ -398,9 +401,7 @@ class MeltdownBakeOp(bpy.types.Operator):
     
         self.cleanup_temp_node()
         
-        # if no_materials:
-            # bpy.data.scenes["MD_TEMP"].objects[pair.lowpoly+"_MD_TMP"].data.materials.clear()
-            # bpy.ops.object.material_slot_remove()
+
         self.cleanup()
           
     def bake_pass(self):
@@ -546,8 +547,6 @@ class MeltdownBakeOp(bpy.types.Operator):
         tree.nodes["Mix3"].inputs[0].default_value = 0.5
         
 
-        
-        
         bpy.ops.render.render(write_still = True, scene = "MD_COMPO")
         bpy.ops.scene.delete()
     
@@ -739,12 +738,14 @@ class MeltdownPanel(bpy.types.Panel):
                             subrow.alignment = 'EXPAND'
                             subrow.prop(bakepass, 'clean_environment', text = "Clean Environment")
                         
-                        if bakepass.clean_environment == False:
+                        if bakepass.clean_environment == False and "clean_environment" in bakepass.props():
                             subrow = box.row(align=True)
                             subrow.alignment = 'EXPAND'
                             subrow.prop(bakepass, 'environment_highpoly', text = "All Highpoly")  
                         
-                        if bakepass.clean_environment == False and bakepass.environment_highpoly == False:
+                        if bakepass.clean_environment == False and \
+                        bakepass.environment_highpoly == False and \
+                        "clean_environment" in bakepass.props():
                             subrow = box.row(align=True)
                             subrow.alignment = 'EXPAND'
                             subrow.prop_search(bakepass, "environment_group", bpy.data, "groups", text = "Environment")
