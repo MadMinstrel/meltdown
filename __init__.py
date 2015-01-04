@@ -637,7 +637,11 @@ class MeltdownPanel(bpy.types.Panel):
     bl_space_type = "VIEW_3D"
     bl_region_type = "TOOLS"
     bl_category = "Meltdown"
-
+    
+    @classmethod
+    def poll(cls, context):
+        return bpy.context.scene.render.engine == "CYCLES"
+    
     def draw(self, context):
         layout = self.layout
         edit = context.user_preferences.edit
