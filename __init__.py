@@ -243,8 +243,6 @@ class MeltdownBakeOp(bpy.types.Operator):
         #add an image node to the lowpoly model's material
         bake_mat = bpy.data.scenes["MD_TEMP"].objects[pair.lowpoly+"_MD_TMP"].active_material
         
-        # bpy.context.active_object.active_material
-        
         bake_mat.use_nodes = True
         if "MDtarget" not in bake_mat.node_tree.nodes:
             imgnode = bake_mat.node_tree.nodes.new(type = "ShaderNodeTexImage")
@@ -358,7 +356,7 @@ class MeltdownBakeOp(bpy.types.Operator):
         # bpy.data.scenes["MD_TEMP"].active_layer = 0
         bpy.data.scenes["MD_TEMP"].layers[0] = True
         
-        # make selections
+        # make selections, ensure visibility
         bpy.ops.object.select_all(action='DESELECT')
         if pair.highpoly != "":
             if pair.hp_obj_vs_group == "GRP":
@@ -377,11 +375,18 @@ class MeltdownBakeOp(bpy.types.Operator):
         else:
             pair.use_hipoly = False
         
+        #lowpoly visibility
         bpy.data.scenes["MD_TEMP"].objects[pair.lowpoly+"_MD_TMP"].hide = False
         bpy.data.scenes["MD_TEMP"].objects[pair.lowpoly+"_MD_TMP"].hide_select = False
         bpy.data.scenes["MD_TEMP"].objects[pair.lowpoly+"_MD_TMP"].hide_render = False
         bpy.data.scenes["MD_TEMP"].objects[pair.lowpoly+"_MD_TMP"].layers[0] = True
         bpy.data.scenes["MD_TEMP"].objects[pair.lowpoly+"_MD_TMP"].select = True
+        
+        #cage visibility
+        if pair.cage != "":
+            bpy.data.scenes["MD_TEMP"].objects[pair.cage+"_MD_TMP"].hide = True
+            bpy.data.scenes["MD_TEMP"].objects[pair.cage+"_MD_TMP"].hide_render = True
+        
         bpy.context.scene.objects.active = bpy.data.scenes["MD_TEMP"].objects[pair.lowpoly+"_MD_TMP"]
         
         if bakepass.clean_environment == False and bakepass.environment_highpoly == True:
