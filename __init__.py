@@ -238,8 +238,12 @@ class MeltdownBakeOp(bpy.types.Operator):
     bake_target = bpy.props.StringProperty()
     
     def create_temp_node(self):
+        mds = bpy.context.scene.meltdown_settings
+        pair = mds.bake_job_queue[self.job].bake_queue[self.pair]
         #add an image node to the lowpoly model's material
-        bake_mat = bpy.context.active_object.active_material
+        bake_mat = bpy.data.scenes["MD_TEMP"].objects[pair.lowpoly+"_MD_TMP"].active_material
+        
+        # bpy.context.active_object.active_material
         
         bake_mat.use_nodes = True
         if "MDtarget" not in bake_mat.node_tree.nodes:
@@ -252,12 +256,6 @@ class MeltdownBakeOp(bpy.types.Operator):
             imgnode.image = bpy.data.images["MDtarget"]
         
         bake_mat.node_tree.nodes.active = imgnode
-    
-    def cleanup_temp_node(self):
-        bake_mat = bpy.context.active_object.active_material
-        if "MDtarget" in bake_mat.node_tree.nodes:
-            imgnode = bake_mat.node_tree.nodes['MDtarget']
-            bake_mat.node_tree.nodes.remove(imgnode)
 
     def create_render_target(self):
         mds = bpy.context.scene.meltdown_settings
@@ -365,15 +363,23 @@ class MeltdownBakeOp(bpy.types.Operator):
         if pair.highpoly != "":
             if pair.hp_obj_vs_group == "GRP":
                 for object in bpy.data.groups[pair.highpoly+"_MD_TMP"].objects:
+                    object.hide = False
+                    object.hide_select = False
+                    object.hide_render = False
                     object.layers[0] = True
                     object.select = True
             else:
+                bpy.data.scenes["MD_TEMP"].objects[pair.highpoly+"_MD_TMP"].hide = False
+                bpy.data.scenes["MD_TEMP"].objects[pair.highpoly+"_MD_TMP"].hide_select = False
+                bpy.data.scenes["MD_TEMP"].objects[pair.highpoly+"_MD_TMP"].hide_render = False
                 bpy.data.scenes["MD_TEMP"].objects[pair.highpoly+"_MD_TMP"].layers[0] = True
                 bpy.data.scenes["MD_TEMP"].objects[pair.highpoly+"_MD_TMP"].select = True
-
         else:
             pair.use_hipoly = False
         
+        bpy.data.scenes["MD_TEMP"].objects[pair.lowpoly+"_MD_TMP"].hide = False
+        bpy.data.scenes["MD_TEMP"].objects[pair.lowpoly+"_MD_TMP"].hide_select = False
+        bpy.data.scenes["MD_TEMP"].objects[pair.lowpoly+"_MD_TMP"].hide_render = False
         bpy.data.scenes["MD_TEMP"].objects[pair.lowpoly+"_MD_TMP"].layers[0] = True
         bpy.data.scenes["MD_TEMP"].objects[pair.lowpoly+"_MD_TMP"].select = True
         bpy.context.scene.objects.active = bpy.data.scenes["MD_TEMP"].objects[pair.lowpoly+"_MD_TMP"]
@@ -383,18 +389,25 @@ class MeltdownBakeOp(bpy.types.Operator):
             for rem_i, rem_pair in enumerate(pair_list):
                 if rem_pair.hp_obj_vs_group == "GRP":
                     for object in  bpy.data.groups[rem_pair.highpoly+"_MD_TMP"].objects:
+                        object.hide = False
+                        object.hide_select = False
+                        object.hide_render = False
                         object.select = True
                         object.layers[0] = True
                 else:
+                    bpy.data.scenes["MD_TEMP"].objects[pair.highpoly+"_MD_TMP"].hide = False
+                    bpy.data.scenes["MD_TEMP"].objects[pair.highpoly+"_MD_TMP"].hide_select = False
+                    bpy.data.scenes["MD_TEMP"].objects[pair.highpoly+"_MD_TMP"].hide_render = False
                     bpy.data.scenes["MD_TEMP"].objects[rem_pair.highpoly+"_MD_TMP"].select = True
                     bpy.data.scenes["MD_TEMP"].objects[rem_pair.highpoly+"_MD_TMP"].layers[0] = True
                 
         if bakepass.clean_environment == False \
         and bakepass.environment_highpoly == False \
         and bakepass.environment_group != "":
-            print("entered")
             for object in bpy.data.groups[bakepass.environment_group+"_MD_TMP"].objects:
-                print(object.name)
+                object.hide = False
+                object.hide_select = False
+                object.hide_render = False
                 object.select = True
                 object.layers[0] = True
         
@@ -478,7 +491,6 @@ class MeltdownBakeOp(bpy.types.Operator):
                 bpy.data.objects.remove(object)
     
     def cleanup(self):
-        self.cleanup_temp_node()
         
         for object in bpy.data.scenes["MD_TEMP"].objects:
             self.remove_object(object)
