@@ -325,24 +325,33 @@ class MeltdownBakeOp(bpy.types.Operator):
         mds = bpy.context.scene.meltdown_settings
         pair = mds.bake_job_queue[self.job].bake_queue[self.pair]
         
-        hp = bpy.data.scenes["MD_TEMP"].objects[pair.highpoly+"_MD_TMP"]
-        for slot in hp.material_slots:
-            mat = slot.material
-            mat.use_nodes = True
-            
-            for node in mat.node_tree.nodes:
-                mat.node_tree.nodes.remove(node)
-            
-            tree = mat.node_tree
-            
-            tree.nodes.new(type = "ShaderNodeBsdfDiffuse")
-            tree.nodes.new(type = "ShaderNodeOutputMaterial")
-            output = tree.nodes["Diffuse BSDF"].outputs["BSDF"]
-            input = tree.nodes["Material Output"].inputs["Surface"]
-            tree.links.new(output, input)
-            
-            mat.node_tree.nodes["Diffuse BSDF"].inputs["Color"].default_value = \
-            [mat.diffuse_color[0], mat.diffuse_color[1], mat.diffuse_color[2], 1]
+        def change_material(hp):
+            for slot in hp.material_slots:
+                mat = slot.material
+                mat.use_nodes = True
+                
+                for node in mat.node_tree.nodes:
+                    mat.node_tree.nodes.remove(node)
+                
+                tree = mat.node_tree
+                
+                tree.nodes.new(type = "ShaderNodeBsdfDiffuse")
+                tree.nodes.new(type = "ShaderNodeOutputMaterial")
+                output = tree.nodes["Diffuse BSDF"].outputs["BSDF"]
+                input = tree.nodes["Material Output"].inputs["Surface"]
+                tree.links.new(output, input)
+                
+                mat.node_tree.nodes["Diffuse BSDF"].inputs["Color"].default_value = \
+                [mat.diffuse_color[0], mat.diffuse_color[1], mat.diffuse_color[2], 1]
+        
+        
+        if pair.highpoly != "":
+            if pair.hp_obj_vs_group == "GRP":
+                for object in bpy.data.groups[pair.highpoly+"_MD_TMP"].objects:
+                    change_material(object)
+            else:
+                change_material(hp = bpy.data.scenes["MD_TEMP"].objects[pair.highpoly+"_MD_TMP"])
+        
     
     def prepare_scene(self):
         mds = bpy.context.scene.meltdown_settings
