@@ -53,6 +53,7 @@ class BakePass(bpy.types.PropertyGroup):
     pair_counter = bpy.props.IntProperty(name="Pair Counter", description="", default=0)
     pass_name = bpy.props.EnumProperty(name = "Pass", default = "NORMAL",
                                     items = (("COMBINED","Combined",""),
+                                            ("MAT_ID","Material ID",""),
                                             #("Z","Depth",""),
                                             #("COLOR","Color",""),
                                             # ("DIFFUSE","Diffuse",""),
@@ -145,7 +146,29 @@ class BakePass(bpy.types.PropertyGroup):
         if self.pass_name == "SUBSURFACE_INDIRECT":
             props = {"samples"}            
         return props
-        
+    
+    def get_cycles_pass_type(self):
+        if self.pass_name == "COMBINED": return "COMBINED"
+        if self.pass_name == "MAT_ID": return "DIFFUSE_COLOR"
+        if self.pass_name == "SHADOW": return "SHADOW"
+        if self.pass_name == "AO": return "AO"
+        if self.pass_name == "NORMAL": return "NORMAL"
+        if self.pass_name == "UV": return "UV"
+        if self.pass_name == "EMIT": return "EMIT"
+        if self.pass_name == "ENVIRONMENT": return "ENVIRONMENT"
+        if self.pass_name == "DIFFUSE_DIRECT": return "DIFFUSE_DIRECT"
+        if self.pass_name == "DIFFUSE_INDIRECT": return "DIFFUSE_INDIRECT"
+        if self.pass_name == "DIFFUSE_COLOR": return "DIFFUSE_COLOR"
+        if self.pass_name == "GLOSSY_DIRECT": return "GLOSSY_DIRECT"
+        if self.pass_name == "GLOSSY_INDIRECT": return "GLOSSY_INDIRECT"
+        if self.pass_name == "GLOSSY_COLOR": return "GLOSSY_COLOR"
+        if self.pass_name == "TRANSMISSION_DIRECT": return "TRANSMISSION_DIRECT"
+        if self.pass_name == "TRANSMISSION_INDIRECT": return "TRANSMISSION_INDIRECT"
+        if self.pass_name == "TRANSMISSION_COLOR": return "TRANSMISSION_COLOR"
+        if self.pass_name == "SUBSURFACE_DIRECT": return "SUBSURFACE_DIRECT"
+        if self.pass_name == "SUBSURFACE_INDIRECT": return "SUBSURFACE_INDIRECT"
+        if self.pass_name == "SUBSURFACE_COLOR": return "SUBSURFACE_COLOR"
+              
     def get_filepath(self, bj):
         path = bj.output 
         if path[-1:] != "/":
@@ -236,6 +259,27 @@ class MeltdownBakeOp(bpy.types.Operator):
             imgnode = bake_mat.node_tree.nodes['MDtarget']
             bake_mat.node_tree.nodes.remove(imgnode)
 
+    def create_render_target(self):
+        mds = bpy.context.scene.meltdown_settings
+        job = mds.bake_job_queue[self.job]
+
+        bpy.ops.image.new(name="MDtarget", width= job.get_render_resolution()[0], \
+        height = job.get_render_resolution()[1], \
+        color=(0.0, 0.0, 0.0, 0.0), alpha=True, generated_type='BLANK', float=False)
+        
+    def cleanup_render_target(self):
+        baketarget = bpy.data.images["MDtarget"]
+        
+        # call compo trees here
+        self.compo_nodes_margin(baketarget)
+        
+        #unlink from image editors
+        for wm in bpy.data.window_managers:
+            for window in wm.windows:
+                for area in window.screen.areas:
+                    if area.type == "IMAGE_EDITOR":
+                        area.spaces[0].image = None
+    
     # def apply_modifiers(self):
     
     # def merge_group(self):
@@ -277,9 +321,32 @@ class MeltdownBakeOp(bpy.types.Operator):
         bakepass = mds.bake_job_queue[self.job].bake_pass_queue[self.bakepass]
         
         #copy pass settings to cycles settings
-        bpy.data.scenes["MD_TEMP"].cycles.bake_type = bakepass.pass_name
+        bpy.data.scenes["MD_TEMP"].cycles.bake_type = bakepass.get_cycles_pass_type()
         bpy.data.scenes["MD_TEMP"].cycles.samples = bakepass.samples
         bpy.data.worlds["MD_TEMP"].light_settings.distance = bakepass.ao_distance
+    
+    def pass_material_id_prep(self):
+        mds = bpy.context.scene.meltdown_settings
+        pair = mds.bake_job_queue[self.job].bake_queue[self.pair]
+        
+        hp = bpy.data.scenes["MD_TEMP"].objects[pair.highpoly+"_MD_TMP"]
+        for slot in hp.material_slots:
+            mat = slot.material
+            mat.use_nodes = True
+            
+            for node in mat.node_tree.nodes:
+                mat.node_tree.nodes.remove(node)
+            
+            tree = mat.node_tree
+            
+            tree.nodes.new(type = "ShaderNodeBsdfDiffuse")
+            tree.nodes.new(type = "ShaderNodeOutputMaterial")
+            output = tree.nodes["Diffuse BSDF"].outputs["BSDF"]
+            input = tree.nodes["Material Output"].inputs["Surface"]
+            tree.links.new(output, input)
+            
+            mat.node_tree.nodes["Diffuse BSDF"].inputs["Color"].default_value = \
+            [mat.diffuse_color[0], mat.diffuse_color[1], mat.diffuse_color[2], 1]
     
     def prepare_scene(self):
         mds = bpy.context.scene.meltdown_settings
@@ -339,27 +406,9 @@ class MeltdownBakeOp(bpy.types.Operator):
                 if object.select == False:
                     self.remove_object(object)
         
-    def create_render_target(self):
-        mds = bpy.context.scene.meltdown_settings
-        job = mds.bake_job_queue[self.job]
-
-        bpy.ops.image.new(name="MDtarget", width= job.get_render_resolution()[0], \
-        height = job.get_render_resolution()[1], \
-        color=(0.0, 0.0, 0.0, 0.0), alpha=True, generated_type='BLANK', float=False)
+        if bakepass.pass_name == "MAT_ID":
+            self.pass_material_id_prep()
         
-    def cleanup_render_target(self):
-        baketarget = bpy.data.images["MDtarget"]
-        
-        # call compo trees here
-        self.compo_nodes_margin(baketarget)
-        
-        #unlink from image editors
-        for wm in bpy.data.window_managers:
-            for window in wm.windows:
-                for area in window.screen.areas:
-                    if area.type == "IMAGE_EDITOR":
-                        area.spaces[0].image = None
-    
     def bake_set(self):
         mds = bpy.context.scene.meltdown_settings
         pair = mds.bake_job_queue[self.job].bake_queue[self.pair]
@@ -399,9 +448,6 @@ class MeltdownBakeOp(bpy.types.Operator):
         save_mode='INTERNAL', use_clear=clear, use_cage=pair_use_cage, \
         use_split_materials=False, use_automatic_name=False)
     
-        self.cleanup_temp_node()
-        
-
         self.cleanup()
           
     def bake_pass(self):
@@ -432,6 +478,8 @@ class MeltdownBakeOp(bpy.types.Operator):
                 bpy.data.objects.remove(object)
     
     def cleanup(self):
+        self.cleanup_temp_node()
+        
         for object in bpy.data.scenes["MD_TEMP"].objects:
             self.remove_object(object)
         
